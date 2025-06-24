@@ -11,7 +11,7 @@
 	<groupId>com.prestabanco</groupId>
 	<artifactId>prestabanco-app</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
-	<name>prestabanco-app</name>
+	<n>prestabanco-app</n>
 	<description>Demo project for Spring Boot</description>
 	<url/>
 	<licenses>
@@ -28,16 +28,13 @@
 	</scm>
 	<properties>
 		<java.version>17</java.version>
-		<!-- Versiones para corregir vulnerabilidades críticas y altas -->
+		<!-- Solo versiones críticas y altas que son estables -->
 		<postgresql.version>42.7.7</postgresql.version>
 		<spring-security.version>6.4.6</spring-security.version>
 		<tomcat.version>10.1.42</tomcat.version>
-		<!-- Versiones para corregir vulnerabilidades medias -->
-		<spring-framework.version>6.1.21</spring-framework.version>
-		<logback.version>1.5.13</logback.version>
 	</properties>
 
-	<!-- Dependency Management para corregir vulnerabilidades críticas, altas y medias -->
+	<!-- Dependency Management solo para vulnerabilidades CRÍTICAS y ALTAS -->
 	<dependencyManagement>
 		<dependencies>
 			<!-- Spring Security BOM para corregir vulnerabilidades críticas -->
@@ -47,27 +44,6 @@
 				<version>${spring-security.version}</version>
 				<type>pom</type>
 				<scope>import</scope>
-			</dependency>
-
-			<!-- Spring Framework BOM para corregir HTTP Response Splitting -->
-			<dependency>
-				<groupId>org.springframework</groupId>
-				<artifactId>spring-framework-bom</artifactId>
-				<version>${spring-framework.version}</version>
-				<type>pom</type>
-				<scope>import</scope>
-			</dependency>
-
-			<!-- Logback para corregir vulnerabilidades de inyección de código y SSRF -->
-			<dependency>
-				<groupId>ch.qos.logback</groupId>
-				<artifactId>logback-core</artifactId>
-				<version>${logback.version}</version>
-			</dependency>
-			<dependency>
-				<groupId>ch.qos.logback</groupId>
-				<artifactId>logback-classic</artifactId>
-				<version>${logback.version}</version>
 			</dependency>
 
 			<!-- Tomcat para corregir DoS vulnerability (alta severidad) -->
