@@ -28,13 +28,51 @@
 	</scm>
 	<properties>
 		<java.version>17</java.version>
-		<!-- Spring Boot 3.4.5 ya incluye las versiones seguras automáticamente -->
+		<!-- Versiones específicas para corregir todas las vulnerabilidades -->
 		<postgresql.version>42.7.7</postgresql.version>
+		<spring-security.version>6.4.6</spring-security.version>
+		<tomcat.version>10.1.42</tomcat.version>
+		<spring-framework.version>6.2.8</spring-framework.version>
 	</properties>
 
-	<!-- Solo PostgreSQL requiere override manual -->
+	<!-- Dependency Management para corregir TODAS las vulnerabilidades -->
 	<dependencyManagement>
 		<dependencies>
+			<!-- Spring Security BOM para corregir vulnerabilidad crítica -->
+			<dependency>
+				<groupId>org.springframework.security</groupId>
+				<artifactId>spring-security-bom</artifactId>
+				<version>${spring-security.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+
+			<!-- Spring Framework BOM para corregir HTTP Response Splitting -->
+			<dependency>
+				<groupId>org.springframework</groupId>
+				<artifactId>spring-framework-bom</artifactId>
+				<version>${spring-framework.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+
+			<!-- Tomcat para corregir vulnerabilidades críticas y altas -->
+			<dependency>
+				<groupId>org.apache.tomcat.embed</groupId>
+				<artifactId>tomcat-embed-core</artifactId>
+				<version>${tomcat.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>org.apache.tomcat.embed</groupId>
+				<artifactId>tomcat-embed-websocket</artifactId>
+				<version>${tomcat.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>org.apache.tomcat.embed</groupId>
+				<artifactId>tomcat-embed-el</artifactId>
+				<version>${tomcat.version}</version>
+			</dependency>
+
 			<!-- PostgreSQL - crítico para seguridad de autenticación -->
 			<dependency>
 				<groupId>org.postgresql</groupId>
@@ -71,14 +109,18 @@
 			<version>${postgresql.version}</version>
 			<scope>runtime</scope>
 		</dependency>
-		<dependency>
-			<groupId>org.springframework.boot</groupId>
-			<artifactId>spring-boot-starter-test</artifactId>
-			<scope>test</scope>
-		</dependency>
+
+		<!-- Forzar versión específica de Spring Security para tests -->
 		<dependency>
 			<groupId>org.springframework.security</groupId>
 			<artifactId>spring-security-test</artifactId>
+			<version>${spring-security.version}</version>
+			<scope>test</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
