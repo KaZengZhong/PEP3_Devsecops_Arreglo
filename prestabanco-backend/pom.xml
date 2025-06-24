@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>3.4.1</version>
+		<version>3.3.7</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>com.prestabanco</groupId>
@@ -28,11 +28,10 @@
 	</scm>
 	<properties>
 		<java.version>17</java.version>
-		<!-- Versiones actualizadas para corregir TODAS las vulnerabilidades -->
+		<!-- Versiones específicas para corregir vulnerabilidades críticas -->
 		<postgresql.version>42.7.7</postgresql.version>
 		<spring-security.version>6.4.6</spring-security.version>
-		<spring-framework.version>6.2.8</spring-framework.version>
-		<logback.version>1.4.14</logback.version>
+		<tomcat.version>10.1.42</tomcat.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -98,7 +97,18 @@
 				<scope>import</scope>
 			</dependency>
 
-			
+			<!-- Forzar versión de Logback para corregir vulnerabilidad de inyección -->
+			<dependency>
+				<groupId>ch.qos.logback</groupId>
+				<artifactId>logback-core</artifactId>
+				<version>${logback.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>ch.qos.logback</groupId>
+				<artifactId>logback-classic</artifactId>
+				<version>${logback.version}</version>
+			</dependency>
+
 			<!-- Forzar versión de Tomcat para corregir DoS vulnerability -->
 			<dependency>
 				<groupId>org.apache.tomcat.embed</groupId>
