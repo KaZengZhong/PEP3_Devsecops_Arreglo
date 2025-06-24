@@ -32,7 +32,7 @@
 		<postgresql.version>42.7.7</postgresql.version>
 		<spring-security.version>6.4.6</spring-security.version>
 		<spring-framework.version>6.2.8</spring-framework.version>
-		<logback.version>1.5.13</logback.version>
+		<logback.version>1.4.14</logback.version>
 	</properties>
 	<dependencies>
 		<dependency>
