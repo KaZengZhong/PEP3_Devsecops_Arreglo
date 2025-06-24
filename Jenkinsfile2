@@ -1,0 +1,163 @@
+pipeline {
+    agent any
+    tools {
+        maven 'maven'
+    }
+
+    stages {
+        stage('Checkout repository') {
+            steps {
+                checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/KaZengZhong/PEP3_Devsecops_Arreglo']])
+            }
+        }
+
+        stage('Build backend') {
+            steps {
+                script {
+                    bat 'cd prestabanco-backend && mvnw clean install -DskipTests'
+                }
+            }
+        }
+
+        stage('Snyk SCA - Backend Dependencies') {
+            steps {
+                script {
+                    echo 'Running Snyk SCA analysis on backend dependencies'
+                    withCredentials([string(credentialsId: 'snyk-token-string', variable: 'SNYK_TOKEN')]) {
+                        bat '''
+                            set SNYK_TOKEN=%SNYK_TOKEN%
+                            cd prestabanco-backend
+                            REM Análisis de dependencias (SCA) - Maven/Java
+                            C:\\Users\\kahao\\.jenkins\\tools\\io.snyk.jenkins.tools.SnykInstallation\\snyk_latest\\snyk-win.exe test --severity-threshold=low --all-projects || true
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Snyk SCA Report - Backend') {
+            steps {
+                script {
+                    echo 'Generating Snyk SCA HTML report for Backend Dependencies'
+                    withCredentials([string(credentialsId: 'snyk-token-string', variable: 'SNYK_TOKEN')]) {
+                        bat '''
+                            set SNYK_TOKEN=%SNYK_TOKEN%
+                            cd prestabanco-backend
+                            mkdir -p reports
+                            REM Reporte de dependencias (SCA)
+                            C:\\Users\\kahao\\.jenkins\\tools\\io.snyk.jenkins.tools.SnykInstallation\\snyk_latest\\snyk-win.exe test --json --severity-threshold=low --all-projects > reports\\snyk-sca-output.json || true
+                            npx snyk-to-html -i reports\\snyk-sca-output.json -o reports\\snyk-backend-sca-report.html || true
+                        '''
+                        archiveArtifacts artifacts: 'prestabanco-backend/reports/snyk-backend-sca-report.html', allowEmptyArchive: true
+                    }
+                }
+            }
+        }
+
+        stage('Test backend') {
+            steps {
+                script {
+                    bat 'cd prestabanco-backend && mvnw test'
+                }
+            }
+        }
+
+        stage('Push backend') {
+            steps {
+                script {
+                    try {
+                        bat 'docker build -t kahaozeng/prestabanco-backend:latest prestabanco-backend'
+                        
+                        withCredentials([usernamePassword(credentialsId: 'docker-credentials', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                            bat 'docker login -u %DOCKER_USERNAME% -p %DOCKER_PASSWORD%'
+                            bat 'docker push kahaozeng/prestabanco-backend:latest'
+                        }
+                    } catch (Exception e) {
+                        echo "Warning: Could not push Docker image. Continuing pipeline. Error: ${e.message}"
+                    }
+                }
+            }
+        }
+
+        stage('Install frontend dependencies') {
+            steps {
+                script {
+                    bat 'cd prestabanco-frontend && npm install'
+                }
+            }
+        }
+
+        stage('Snyk SCA - Frontend Dependencies') {
+            steps {
+                script {
+                    echo 'Running Snyk SCA analysis on frontend dependencies'
+                    withCredentials([string(credentialsId: 'snyk-token-string', variable: 'SNYK_TOKEN')]) {
+                        bat '''
+                            set SNYK_TOKEN=%SNYK_TOKEN%
+                            cd prestabanco-frontend
+                            REM Análisis de dependencias (SCA) - npm/Node.js
+                            C:\\Users\\kahao\\.jenkins\\tools\\io.snyk.jenkins.tools.SnykInstallation\\snyk_latest\\snyk-win.exe test --severity-threshold=low || true
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Snyk SCA Report - Frontend') {
+            steps {
+                script {
+                    echo 'Generating Snyk SCA HTML report for Frontend Dependencies'
+                    withCredentials([string(credentialsId: 'snyk-token-string', variable: 'SNYK_TOKEN')]) {
+                        bat '''
+                            set SNYK_TOKEN=%SNYK_TOKEN%
+                            cd prestabanco-frontend
+                            mkdir -p reports
+                            REM Reporte de dependencias (SCA)
+                            C:\\Users\\kahao\\.jenkins\\tools\\io.snyk.jenkins.tools.SnykInstallation\\snyk_latest\\snyk-win.exe test --json --severity-threshold=low > reports\\snyk-sca-output.json || true
+                            npx snyk-to-html -i reports\\snyk-sca-output.json -o reports\\snyk-frontend-sca-report.html || true
+                        '''
+                        archiveArtifacts artifacts: 'prestabanco-frontend/reports/snyk-frontend-sca-report.html', allowEmptyArchive: true
+                    }
+                }
+            }
+        }
+
+        stage('Build frontend') {
+            steps {
+                script {
+                    bat 'cd prestabanco-frontend && npm run build'
+                }
+            }
+        }
+
+        stage('Push frontend') {
+            steps {
+                script {
+                    try {
+                        bat 'docker build -t kahaozeng/prestabanco-frontend:latest prestabanco-frontend'
+                    
+                        withCredentials([usernamePassword(credentialsId: 'docker-credentials', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                            bat 'docker login -u %DOCKER_USERNAME% -p %DOCKER_PASSWORD%'
+                            bat 'docker push kahaozeng/prestabanco-frontend:latest'
+                        }
+                    } catch (Exception e) {
+                        echo "Warning: Could not push Docker image. Continuing pipeline. Error: ${e.message}"
+                    }
+                }
+            }
+        }
+
+        stage('Deploy with Docker Compose') {
+            steps {
+                script {
+                    try {
+                        bat 'dir'
+                        bat 'docker-compose -f compose2.yml up -d'
+                    } catch (Exception e) {
+                        echo "Warning: Could not deploy with Docker Compose. Error: ${e.message}"
+                    }
+                }
+            }
+        }
+    }
+}
