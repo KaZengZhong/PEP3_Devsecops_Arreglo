@@ -98,18 +98,7 @@
 				<scope>import</scope>
 			</dependency>
 
-			<!-- Forzar versión de Logback para corregir vulnerabilidad de inyección -->
-			<dependency>
-				<groupId>ch.qos.logback</groupId>
-				<artifactId>logback-core</artifactId>
-				<version>${logback.version}</version>
-			</dependency>
-			<dependency>
-				<groupId>ch.qos.logback</groupId>
-				<artifactId>logback-classic</artifactId>
-				<version>${logback.version}</version>
-			</dependency>
-
+			
 			<!-- Forzar versión de Tomcat para corregir DoS vulnerability -->
 			<dependency>
 				<groupId>org.apache.tomcat.embed</groupId>
