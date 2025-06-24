@@ -11,7 +11,7 @@
 	<groupId>com.prestabanco</groupId>
 	<artifactId>prestabanco-app</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
-	<n>prestabanco-app</n>
+	<name>prestabanco-app</name>
 	<description>Demo project for Spring Boot</description>
 	<url/>
 	<licenses>
