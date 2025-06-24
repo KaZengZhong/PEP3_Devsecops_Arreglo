@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>3.3.7</version>
+		<version>3.4.5</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>com.prestabanco</groupId>
@@ -28,39 +28,18 @@
 	</scm>
 	<properties>
 		<java.version>17</java.version>
-		<!-- Solo versiones críticas y altas que son estables -->
+		<!-- Spring Boot 3.4.5 ya incluye las versiones seguras automáticamente -->
 		<postgresql.version>42.7.7</postgresql.version>
-		<spring-security.version>6.4.6</spring-security.version>
-		<tomcat.version>10.1.42</tomcat.version>
 	</properties>
 
-	<!-- Dependency Management solo para vulnerabilidades CRÍTICAS y ALTAS -->
+	<!-- Solo PostgreSQL requiere override manual -->
 	<dependencyManagement>
 		<dependencies>
-			<!-- Spring Security BOM para corregir vulnerabilidades críticas -->
+			<!-- PostgreSQL - crítico para seguridad de autenticación -->
 			<dependency>
-				<groupId>org.springframework.security</groupId>
-				<artifactId>spring-security-bom</artifactId>
-				<version>${spring-security.version}</version>
-				<type>pom</type>
-				<scope>import</scope>
-			</dependency>
-
-			<!-- Tomcat para corregir DoS vulnerability (alta severidad) -->
-			<dependency>
-				<groupId>org.apache.tomcat.embed</groupId>
-				<artifactId>tomcat-embed-core</artifactId>
-				<version>${tomcat.version}</version>
-			</dependency>
-			<dependency>
-				<groupId>org.apache.tomcat.embed</groupId>
-				<artifactId>tomcat-embed-websocket</artifactId>
-				<version>${tomcat.version}</version>
-			</dependency>
-			<dependency>
-				<groupId>org.apache.tomcat.embed</groupId>
-				<artifactId>tomcat-embed-el</artifactId>
-				<version>${tomcat.version}</version>
+				<groupId>org.postgresql</groupId>
+				<artifactId>postgresql</artifactId>
+				<version>${postgresql.version}</version>
 			</dependency>
 		</dependencies>
 	</dependencyManagement>
