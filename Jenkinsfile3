@@ -79,7 +79,9 @@ pipeline {
                     
                     // Crear directorio de reportes
                     bat "if not exist \"${env.REPORTS_DIR}\" mkdir ${env.REPORTS_DIR}"
-        stage('Wait for Application Ready') {
+                }
+            }
+        }
 
         stage('Checkout Repository') {
             steps {
@@ -162,6 +164,8 @@ pipeline {
                 }
             }
         }
+
+        stage('Wait for Application Ready') {
             steps {
                 script {
                     echo "⏳ Waiting for application to be ready..."
@@ -203,7 +207,7 @@ pipeline {
                             -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
                             -t owasp/zap2docker-stable ^
                             zap-baseline.py ^
-                            -t %FRONTEND_URL% ^
+                            -t http://host.docker.internal:8070 ^
                             -J zap-frontend-baseline-%TIMESTAMP%.json ^
                             -r zap-frontend-baseline-%TIMESTAMP%.html ^
                             -x zap-frontend-baseline-%TIMESTAMP%.xml ^
@@ -232,7 +236,7 @@ pipeline {
                             -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
                             -t owasp/zap2docker-stable ^
                             zap-baseline.py ^
-                            -t %BACKEND_URL% ^
+                            -t http://host.docker.internal:8090 ^
                             -J zap-backend-baseline-%TIMESTAMP%.json ^
                             -r zap-backend-baseline-%TIMESTAMP%.html ^
                             -x zap-backend-baseline-%TIMESTAMP%.xml ^
@@ -261,7 +265,7 @@ pipeline {
                             -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
                             -t owasp/zap2docker-stable ^
                             zap-api-scan.py ^
-                            -t %BACKEND_URL%/v3/api-docs ^
+                            -t http://host.docker.internal:8090/v3/api-docs ^
                             -f openapi ^
                             -J zap-api-scan-%TIMESTAMP%.json ^
                             -r zap-api-scan-%TIMESTAMP%.html ^
@@ -290,7 +294,7 @@ pipeline {
                                 -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
                                 -t owasp/zap2docker-stable ^
                                 zap-full-scan.py ^
-                                -t %FRONTEND_URL% ^
+                                -t http://host.docker.internal:8070 ^
                                 -J zap-full-scan-%TIMESTAMP%.json ^
                                 -r zap-full-scan-%TIMESTAMP%.html ^
                                 -x zap-full-scan-%TIMESTAMP%.xml ^
