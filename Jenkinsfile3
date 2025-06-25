@@ -145,44 +145,50 @@ pipeline {
                 script {
                     echo "⏳ Waiting for application to be ready..."
                     
+                    // Espera inicial para que los containers se inicien
+                    sleep(time: 90, unit: "SECONDS")
+                    
+                    // Verificar Backend con PowerShell (más confiable en Windows)
                     bat '''
-                        @echo off
-                        setlocal enabledelayedexpansion
-                        
-                        echo "Esperando servicios..."
-                        timeout /t 90 /nobreak
-                        
-                        REM Verificar Backend
-                        echo "Checking Backend Health..."
-                        set backend_ready=false
-                        for /l %%i in (1,1,30) do (
-                            curl -f %BACKEND_URL%/actuator/health 1>nul 2>nul
-                            if !errorlevel! equ 0 (
-                                echo "Backend is ready"
-                                set backend_ready=true
-                                goto check_frontend
-                            )
-                            echo "Backend attempt %%i/30..."
-                            timeout /t 5 /nobreak
-                        )
-                        
-                        :check_frontend
-                        REM Verificar Frontend
-                        echo "Checking Frontend..."
-                        set frontend_ready=false
-                        for /l %%i in (1,1,30) do (
-                            curl -f %FRONTEND_URL% 1>nul 2>nul
-                            if !errorlevel! equ 0 (
-                                echo "Frontend is ready"
-                                set frontend_ready=true
-                                goto ready_check_done
-                            )
-                            echo "Frontend attempt %%i/30..."
-                            timeout /t 5 /nobreak
-                        )
-                        
-                        :ready_check_done
-                        echo "Application startup verification completed"
+                        powershell -Command "
+                        Write-Output 'Checking Backend Health...'
+                        $maxAttempts = 30
+                        for ($i = 1; $i -le $maxAttempts; $i++) {
+                            try {
+                                $response = Invoke-WebRequest -Uri '%BACKEND_URL%/actuator/health' -Method GET -TimeoutSec 5 -UseBasicParsing
+                                if ($response.StatusCode -eq 200) {
+                                    Write-Output 'Backend is ready'
+                                    break
+                                }
+                            }
+                            catch {
+                                Write-Output \"Backend attempt $i/$maxAttempts...\"
+                                Start-Sleep -Seconds 5
+                            }
+                        }
+                        "
+                    '''
+                    
+                    // Verificar Frontend con PowerShell
+                    bat '''
+                        powershell -Command "
+                        Write-Output 'Checking Frontend...'
+                        $maxAttempts = 30
+                        for ($i = 1; $i -le $maxAttempts; $i++) {
+                            try {
+                                $response = Invoke-WebRequest -Uri '%FRONTEND_URL%' -Method GET -TimeoutSec 5 -UseBasicParsing
+                                if ($response.StatusCode -eq 200) {
+                                    Write-Output 'Frontend is ready'
+                                    break
+                                }
+                            }
+                            catch {
+                                Write-Output \"Frontend attempt $i/$maxAttempts...\"
+                                Start-Sleep -Seconds 5
+                            }
+                        }
+                        Write-Output 'Application startup verification completed'
+                        "
                     '''
                 }
             }
