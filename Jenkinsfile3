@@ -106,10 +106,18 @@ pipeline {
                     echo "🚀 Deploying fresh application for security testing..."
                     
                     try {
-                        // Parar containers existentes
+                        // Parar containers existentes y limpiar conflictos
                         bat '''
                             echo "Stopping existing containers..."
                             docker-compose -f %COMPOSE_FILE% down || echo "No containers to stop"
+                            
+                            echo "Removing any conflicting containers..."
+                            docker rm -f postgres-1 || echo "No postgres-1 to remove"
+                            docker rm -f backend-1 || echo "No backend-1 to remove" 
+                            docker rm -f frontend-1 || echo "No frontend-1 to remove"
+                            
+                            echo "Cleaning up any orphaned containers..."
+                            docker container prune -f || echo "Container cleanup completed"
                         '''
                         
                         // Descargar imágenes más recientes
@@ -138,40 +146,43 @@ pipeline {
                     echo "⏳ Waiting for application to be ready..."
                     
                     bat '''
+                        @echo off
+                        setlocal enabledelayedexpansion
+                        
                         echo "Esperando servicios..."
-                        timeout /t 90
+                        timeout /t 90 /nobreak
                         
                         REM Verificar Backend
-                        echo "🔧 Checking Backend Health..."
+                        echo "Checking Backend Health..."
                         set backend_ready=false
                         for /l %%i in (1,1,30) do (
-                            curl -f %BACKEND_URL%/actuator/health >nul 2>&1
-                            if !errorlevel! == 0 (
-                                echo "✅ Backend is ready"
+                            curl -f %BACKEND_URL%/actuator/health 1>nul 2>nul
+                            if !errorlevel! equ 0 (
+                                echo "Backend is ready"
                                 set backend_ready=true
                                 goto check_frontend
                             )
                             echo "Backend attempt %%i/30..."
-                            timeout /t 5
+                            timeout /t 5 /nobreak
                         )
                         
                         :check_frontend
                         REM Verificar Frontend
-                        echo "📱 Checking Frontend..."
+                        echo "Checking Frontend..."
                         set frontend_ready=false
                         for /l %%i in (1,1,30) do (
-                            curl -f %FRONTEND_URL% >nul 2>&1
-                            if !errorlevel! == 0 (
-                                echo "✅ Frontend is ready"
+                            curl -f %FRONTEND_URL% 1>nul 2>nul
+                            if !errorlevel! equ 0 (
+                                echo "Frontend is ready"
                                 set frontend_ready=true
                                 goto ready_check_done
                             )
                             echo "Frontend attempt %%i/30..."
-                            timeout /t 5
+                            timeout /t 5 /nobreak
                         )
                         
                         :ready_check_done
-                        echo "🎯 Application startup verification completed"
+                        echo "Application startup verification completed"
                     '''
                 }
             }
