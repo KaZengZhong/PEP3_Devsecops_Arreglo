@@ -256,6 +256,48 @@ pipeline {
         }
 
         // ========== ANÁLISIS DE RESULTADOS ==========
+        stage('Parse Vulnerabilities') {
+            steps {
+                script {
+                    echo "🔍 Analizando vulnerabilidades encontradas..."
+                    
+                    // Crear script para parsear JSON y extraer vulnerabilidades críticas
+                    bat '''
+                        echo @echo off > parse_vulns.bat
+                        echo echo === VULNERABILIDADES CRÍTICAS Y ALTAS === >> parse_vulns.bat
+                        echo for %%%%f in ("%REPORTS_DIR%\\*.json") do ( >> parse_vulns.bat
+                        echo     echo. >> parse_vulns.bat
+                        echo     echo === Archivo: %%%%~nxf === >> parse_vulns.bat
+                        echo     findstr /i "High\\|Critical\\|alert" "%%%%f" ^| findstr /v "confidence" ^| head -5 >> parse_vulns.bat
+                        echo ) >> parse_vulns.bat
+                        echo echo === FIN DEL ANÁLISIS === >> parse_vulns.bat
+                    '''
+                    
+                    // Ejecutar el análisis
+                    bat '''
+                        call parse_vulns.bat > "%REPORTS_DIR%/CRITICAL-VULNERABILITIES-%TIMESTAMP%.txt" 2>&1 || echo "Analysis completed"
+                    '''
+                    
+                    // Contar vulnerabilidades por tipo
+                    bat '''
+                        echo === CONTEO DE VULNERABILIDADES === > "%REPORTS_DIR%/VULNERABILITY-COUNT-%TIMESTAMP%.txt"
+                        echo Fecha: %DATE% %TIME% >> "%REPORTS_DIR%/VULNERABILITY-COUNT-%TIMESTAMP%.txt"
+                        echo. >> "%REPORTS_DIR%/VULNERABILITY-COUNT-%TIMESTAMP%.txt"
+                        
+                        for %%%%f in ("%REPORTS_DIR%\\*.json") do (
+                            echo === %%%%~nxf === >> "%REPORTS_DIR%/VULNERABILITY-COUNT-%TIMESTAMP%.txt"
+                            findstr /c:"High" "%%%%f" | find /c "High" >> "%REPORTS_DIR%/VULNERABILITY-COUNT-%TIMESTAMP%.txt" 2>nul || echo 0 >> "%REPORTS_DIR%/VULNERABILITY-COUNT-%TIMESTAMP%.txt"
+                            findstr /c:"Medium" "%%%%f" | find /c "Medium" >> "%REPORTS_DIR%/VULNERABILITY-COUNT-%TIMESTAMP%.txt" 2>nul || echo 0 >> "%REPORTS_DIR%/VULNERABILITY-COUNT-%TIMESTAMP%.txt"
+                            findstr /c:"Low" "%%%%f" | find /c "Low" >> "%REPORTS_DIR%/VULNERABILITY-COUNT-%TIMESTAMP%.txt" 2>nul || echo 0 >> "%REPORTS_DIR%/VULNERABILITY-COUNT-%TIMESTAMP%.txt"
+                            echo. >> "%REPORTS_DIR%/VULNERABILITY-COUNT-%TIMESTAMP%.txt"
+                        )
+                    '''
+                    
+                    echo "🔍 Análisis automático de vulnerabilidades completado"
+                }
+            }
+        }
+        
         stage('Security Analysis & Reports') {
             steps {
                 script {
@@ -264,26 +306,43 @@ pipeline {
                     // Listar todos los reportes
                     bat "dir %REPORTS_DIR%"
                     
-                    // Crear resumen de seguridad OWASP ZAP
+                    // Crear resumen de vulnerabilidades detallado
                     bat '''
-                        echo === RESUMEN DE SEGURIDAD OWASP ZAP === > "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
-                        echo Fecha: %DATE% %TIME% >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
-                        echo Pipeline: Docker Compose + OWASP ZAP >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
-                        echo. >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
-                        echo Scans ejecutados: >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
-                        echo - ZAP Baseline Frontend >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
-                        echo - ZAP Baseline Backend >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
-                        echo - ZAP API Scan Backend >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
-                        echo - ZAP Full Scan Frontend >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
-                        echo - ZAP Full Scan Backend >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
-                        echo. >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
-                        echo Reportes generados: >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
-                        dir /b "%REPORTS_DIR%" >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
+                        echo === RESUMEN DETALLADO DE VULNERABILIDADES OWASP ZAP === > "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo Fecha: %DATE% %TIME% >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo Pipeline: Docker Compose + OWASP ZAP >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo. >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo === SCANS EJECUTADOS === >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo ✅ ZAP Baseline Frontend >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo ✅ ZAP Baseline Backend >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo ✅ ZAP API Scan Backend >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo ✅ ZAP Full Scan Frontend >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo ✅ ZAP Full Scan Backend >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo. >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo === COMO REVISAR VULNERABILIDADES === >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo 1. Descarga los archivos .HTML desde Jenkins Artifacts >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo 2. Abre los .HTML en tu navegador >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo 3. Revisa seccion "Alerts" para vulnerabilidades >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo 4. Prioriza: HIGH ^> MEDIUM ^> LOW ^> INFO >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo. >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo === ARCHIVOS IMPORTANTES === >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo - VULNERABILITIES-SUMMARY: Este archivo >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo - CRITICAL-VULNERABILITIES: Vulnerabilidades críticas >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo - VULNERABILITY-COUNT: Conteo por tipo >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo - zap-***.html: Reportes visuales completos >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo. >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        echo === ARCHIVOS GENERADOS === >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
+                        dir /b "%REPORTS_DIR%" >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
                     '''
                     
+                    // Contar archivos de reportes
+                    def reportCount = bat(script: 'dir /b "%REPORTS_DIR%" | find /c ".html"', returnStdout: true).trim()
+                    
                     echo "✅ Análisis completo de seguridad OWASP ZAP finalizado"
-                    echo "📊 Tipos de reportes: JSON, HTML, XML"
-                    echo "🔍 Vulnerabilidades detectadas en aplicaciones web"
+                    echo "📊 Tipos de reportes: JSON (datos), HTML (visual), XML (integración)"
+                    echo "🔍 ${reportCount} reportes HTML generados para revisión"
+                    echo "📁 IMPORTANTE: Descarga y abre los archivos .HTML para ver vulnerabilidades"
+                    echo "🎯 Revisa especialmente: CRITICAL-VULNERABILITIES.txt y VULNERABILITY-COUNT.txt"
                 }
             }
         }
