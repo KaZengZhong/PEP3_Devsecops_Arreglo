@@ -20,59 +20,9 @@ pipeline {
                     // Crear directorio para reportes
                     bat "if not exist %REPORTS_DIR% mkdir %REPORTS_DIR%"
                     
-                    echo "=== PIPELINE DE SEGURIDAD CON DOCKER COMPOSE ==="
+                    echo "=== PIPELINE DE SEGURIDAD OWASP ZAP ==="
                     echo "🐳 Desplegando aplicaciones automáticamente"
-                    echo "📊 Análisis estático + dinámico completo"
-                }
-            }
-        }
-
-        // ========== ANÁLISIS ESTÁTICO ==========
-        stage('Static Security Analysis') {
-            parallel {
-                stage('Snyk - Dependencies') {
-                    steps {
-                        script {
-                            echo "🔍 Analizando dependencias con Snyk..."
-                            
-                            bat '''
-                                npx snyk test --json > "%REPORTS_DIR%/snyk-deps-%TIMESTAMP%.json" || echo "Snyk dependencies completed"
-                                npx snyk test --severity-threshold=medium || echo "Medium+ vulnerabilities check completed"
-                            '''
-                        }
-                    }
-                }
-                
-                stage('Snyk - Code Analysis') {
-                    steps {
-                        script {
-                            echo "🔍 Analizando código con Snyk..."
-                            
-                            bat '''
-                                npx snyk code test --json > "%REPORTS_DIR%/snyk-code-%TIMESTAMP%.json" || echo "Snyk code scan completed"
-                            '''
-                        }
-                    }
-                }
-                
-                stage('OWASP Dependency Check') {
-                    steps {
-                        script {
-                            echo "🔍 OWASP Dependency Check..."
-                            
-                            bat '''
-                                docker run --rm ^
-                                    -v "%cd%:/src:ro" ^
-                                    -v "%cd%\\%REPORTS_DIR%:/report:rw" ^
-                                    owasp/dependency-check ^
-                                    --scan /src ^
-                                    --format ALL ^
-                                    --out /report ^
-                                    --project "prestabanco-static-%TIMESTAMP%"
-                                exit /b 0
-                            '''
-                        }
-                    }
+                    echo "🕷️ Análisis dinámico completo con OWASP ZAP"
                 }
             }
         }
@@ -128,13 +78,13 @@ pipeline {
             }
         }
 
-        // ========== ANÁLISIS DINÁMICO OWASP ZAP ==========
-        stage('OWASP ZAP Security Scans') {
+        // ========== OWASP ZAP SECURITY SCANS ==========
+        stage('OWASP ZAP Baseline Scans') {
             parallel {
                 stage('ZAP Baseline - Frontend') {
                     steps {
                         script {
-                            echo "🕷️ OWASP ZAP - Escaneando Frontend..."
+                            echo "🕷️ OWASP ZAP - Baseline Scan Frontend..."
                             
                             bat '''
                                 docker run --rm ^
@@ -156,7 +106,7 @@ pipeline {
                 stage('ZAP Baseline - Backend') {
                     steps {
                         script {
-                            echo "🕷️ OWASP ZAP - Escaneando Backend..."
+                            echo "🕷️ OWASP ZAP - Baseline Scan Backend..."
                             
                             bat '''
                                 docker run --rm ^
@@ -174,38 +124,38 @@ pipeline {
                         }
                     }
                 }
-                
-                stage('ZAP API Scan') {
-                    steps {
-                        script {
-                            echo "🕷️ OWASP ZAP - API Security Scan..."
-                            
-                            bat '''
-                                docker run --rm ^
-                                    -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
-                                    --network host ^
-                                    -t zaproxy/zap-stable ^
-                                    zap-api-scan.py ^
-                                    -t http://localhost:8090/v3/api-docs ^
-                                    -f openapi ^
-                                    -J zap-api-scan-%TIMESTAMP%.json ^
-                                    -r zap-api-scan-%TIMESTAMP%.html ^
-                                    -x zap-api-scan-%TIMESTAMP%.xml || echo "API scan completed"
-                                exit /b 0
-                            '''
-                        }
-                    }
+            }
+        }
+        
+        stage('OWASP ZAP API Scan') {
+            steps {
+                script {
+                    echo "🕷️ OWASP ZAP - API Security Scan..."
+                    
+                    bat '''
+                        docker run --rm ^
+                            -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
+                            --network host ^
+                            -t zaproxy/zap-stable ^
+                            zap-api-scan.py ^
+                            -t http://localhost:8090/v3/api-docs ^
+                            -f openapi ^
+                            -J zap-api-scan-%TIMESTAMP%.json ^
+                            -r zap-api-scan-%TIMESTAMP%.html ^
+                            -x zap-api-scan-%TIMESTAMP%.xml || echo "API scan completed"
+                        exit /b 0
+                    '''
                 }
             }
         }
 
-        // ========== ANÁLISIS AVANZADO ==========
-        stage('Advanced Security Scans') {
+        // ========== OWASP ZAP FULL SCANS ==========
+        stage('OWASP ZAP Full Scans') {
             parallel {
                 stage('ZAP Full Scan - Frontend') {
                     steps {
                         script {
-                            echo "🕷️ OWASP ZAP - Full Scan Frontend (puede tardar)..."
+                            echo "🕷️ OWASP ZAP - Full Scan Frontend (análisis profundo)..."
                             
                             bat '''
                                 docker run --rm ^
@@ -224,30 +174,22 @@ pipeline {
                     }
                 }
                 
-                stage('Container Security Scan') {
+                stage('ZAP Full Scan - Backend') {
                     steps {
                         script {
-                            echo "🐳 Escaneando seguridad de containers..."
+                            echo "🕷️ OWASP ZAP - Full Scan Backend (análisis profundo)..."
                             
                             bat '''
                                 docker run --rm ^
-                                    -v /var/run/docker.sock:/var/run/docker.sock ^
-                                    -v "%cd%\\%REPORTS_DIR%:/output" ^
-                                    aquasec/trivy image ^
-                                    --format json ^
-                                    --output /output/trivy-frontend-%TIMESTAMP%.json ^
-                                    kahaozeng/prestabanco-frontend:latest || echo "Frontend container scan completed"
-                                exit /b 0
-                            '''
-                            
-                            bat '''
-                                docker run --rm ^
-                                    -v /var/run/docker.sock:/var/run/docker.sock ^
-                                    -v "%cd%\\%REPORTS_DIR%:/output" ^
-                                    aquasec/trivy image ^
-                                    --format json ^
-                                    --output /output/trivy-backend-%TIMESTAMP%.json ^
-                                    kahaozeng/prestabanco-backend:latest || echo "Backend container scan completed"
+                                    -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
+                                    --network host ^
+                                    -t zaproxy/zap-stable ^
+                                    zap-full-scan.py ^
+                                    -t http://localhost:8090 ^
+                                    -J zap-full-backend-%TIMESTAMP%.json ^
+                                    -r zap-full-backend-%TIMESTAMP%.html ^
+                                    -x zap-full-backend-%TIMESTAMP%.xml ^
+                                    --auto
                                 exit /b 0
                             '''
                         }
@@ -260,22 +202,31 @@ pipeline {
         stage('Security Analysis & Reports') {
             steps {
                 script {
-                    echo "📊 Generando análisis consolidado de seguridad..."
+                    echo "📊 Generando análisis consolidado de vulnerabilidades..."
                     
                     // Listar todos los reportes
                     bat "dir %REPORTS_DIR%"
                     
-                    // Crear resumen de seguridad
+                    // Crear resumen de seguridad OWASP ZAP
                     bat '''
-                        echo === RESUMEN DE SEGURIDAD === > "%REPORTS_DIR%/security-summary-%TIMESTAMP%.txt"
-                        echo Fecha: %DATE% %TIME% >> "%REPORTS_DIR%/security-summary-%TIMESTAMP%.txt"
-                        echo Pipeline: Docker Compose + OWASP ZAP + Snyk >> "%REPORTS_DIR%/security-summary-%TIMESTAMP%.txt"
-                        echo. >> "%REPORTS_DIR%/security-summary-%TIMESTAMP%.txt"
-                        echo Reportes generados: >> "%REPORTS_DIR%/security-summary-%TIMESTAMP%.txt"
-                        dir /b "%REPORTS_DIR%" >> "%REPORTS_DIR%/security-summary-%TIMESTAMP%.txt"
+                        echo === RESUMEN DE SEGURIDAD OWASP ZAP === > "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
+                        echo Fecha: %DATE% %TIME% >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
+                        echo Pipeline: Docker Compose + OWASP ZAP >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
+                        echo. >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
+                        echo Scans ejecutados: >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
+                        echo - ZAP Baseline Frontend >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
+                        echo - ZAP Baseline Backend >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
+                        echo - ZAP API Scan Backend >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
+                        echo - ZAP Full Scan Frontend >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
+                        echo - ZAP Full Scan Backend >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
+                        echo. >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
+                        echo Reportes generados: >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
+                        dir /b "%REPORTS_DIR%" >> "%REPORTS_DIR%/zap-security-summary-%TIMESTAMP%.txt"
                     '''
                     
-                    echo "✅ Análisis completo de seguridad finalizado"
+                    echo "✅ Análisis completo de seguridad OWASP ZAP finalizado"
+                    echo "📊 Tipos de reportes: JSON, HTML, XML"
+                    echo "🔍 Vulnerabilidades detectadas en aplicaciones web"
                 }
             }
         }
@@ -291,20 +242,23 @@ pipeline {
                     docker-compose -f %COMPOSE_FILE% down --remove-orphans || echo "Cleanup completed"
                 '''
                 
-                echo "📁 Archivando reportes de seguridad..."
+                echo "📁 Archivando reportes de seguridad OWASP ZAP..."
                 archiveArtifacts artifacts: "${REPORTS_DIR}/**/*", allowEmptyArchive: true
                 
-                echo "🎯 PIPELINE DE SEGURIDAD COMPLETADO"
+                echo "🎯 PIPELINE OWASP ZAP COMPLETADO"
                 echo "📊 Reportes disponibles en Jenkins artifacts"
+                echo "🕷️ Análisis dinámico de seguridad web completo"
             }
         }
         
         success {
-            echo "✅ Pipeline de seguridad ejecutado exitosamente"
+            echo "✅ Pipeline OWASP ZAP ejecutado exitosamente"
+            echo "🔍 Revisa los reportes HTML para ver vulnerabilidades detalladas"
         }
         
         failure {
             echo "❌ Pipeline falló - revisar logs para detalles"
+            echo "💡 Tip: Las aplicaciones deben estar disponibles para el escaneo"
         }
     }
 }
