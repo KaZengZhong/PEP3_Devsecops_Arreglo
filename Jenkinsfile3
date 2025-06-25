@@ -65,12 +65,41 @@ pipeline {
                         -t http://localhost:8070 ^
                         -r frontend-report.html ^
                         -J frontend-report.json ^
-                        --auto || echo "Frontend scan completed"
+                        --auto || echo "Frontend scan completed with findings"
+                    echo "✅ Frontend scan terminó - verificar reportes para vulnerabilidades"
                 '''
             }
         }
 
-        stage('ZAP Backend Scan') {
+        stage('Verify Backend Health') {
+            steps {
+                script {
+                    echo "🔍 Verificando que el backend esté respondiendo..."
+                    
+                    def backendReady = false
+                    for (int i = 0; i < 10; i++) {
+                        def result = bat(script: 'curl -f -m 10 http://localhost:8090/actuator/health || exit 1', returnStatus: true)
+                        if (result == 0) {
+                            backendReady = true
+                            echo "✅ Backend está listo en el intento ${i+1}"
+                            break
+                        } else {
+                            echo "❌ Backend no responde, intento ${i+1}/10"
+                            bat 'ping localhost -n 6 > nul'
+                        }
+                    }
+                    
+                    if (!backendReady) {
+                        echo "⚠️ Backend no responde después de 10 intentos"
+                        echo "🔍 Verificando containers..."
+                        bat 'docker-compose -f %COMPOSE_FILE% ps'
+                        bat 'docker-compose -f %COMPOSE_FILE% logs backend || echo "No backend logs"'
+                    } else {
+                        echo "🎯 Backend verificado, procediendo con ZAP scan..."
+                    }
+                }
+            }
+        }
             steps {
                 bat '''
                     echo "🕷️ ZAP Backend Baseline Scan..."
@@ -99,7 +128,8 @@ pipeline {
                         -t http://localhost:8090/v3/api-docs ^
                         -f openapi ^
                         -r api-report.html ^
-                        -J api-report.json || echo "API scan completed"
+                        -J api-report.json || echo "API scan completed with findings"
+                    echo "✅ API scan terminó - verificar reportes para vulnerabilidades"
                 '''
             }
         }
