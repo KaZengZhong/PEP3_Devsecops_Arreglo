@@ -3,7 +3,6 @@ pipeline {
     
     environment {
         REPORTS_DIR = 'security-reports'
-        TIMESTAMP = "${new Date().format('yyyyMMdd-HHmmss')}"
         COMPOSE_FILE = 'compose2.yml'
     }
     
@@ -135,7 +134,6 @@ pipeline {
             }
         }
 
-        // ========== OWASP ZAP SECURITY SCANS ==========
         stage('OWASP ZAP Baseline Scans') {
             parallel {
                 stage('ZAP Baseline - Frontend') {
@@ -150,9 +148,9 @@ pipeline {
                                     -t zaproxy/zap-stable ^
                                     zap-baseline.py ^
                                     -t http://localhost:8070 ^
-                                    -J zap-frontend-baseline-%TIMESTAMP%.json ^
-                                    -r zap-frontend-baseline-%TIMESTAMP%.html ^
-                                    -x zap-frontend-baseline-%TIMESTAMP%.xml ^
+                                    -J zap-frontend-baseline.json ^
+                                    -r zap-frontend-baseline.html ^
+                                    -x zap-frontend-baseline.xml ^
                                     --auto
                                 exit /b 0
                             '''
@@ -172,9 +170,9 @@ pipeline {
                                     -t zaproxy/zap-stable ^
                                     zap-baseline.py ^
                                     -t http://localhost:8090 ^
-                                    -J zap-backend-baseline-%TIMESTAMP%.json ^
-                                    -r zap-backend-baseline-%TIMESTAMP%.html ^
-                                    -x zap-backend-baseline-%TIMESTAMP%.xml ^
+                                    -J zap-backend-baseline.json ^
+                                    -r zap-backend-baseline.html ^
+                                    -x zap-backend-baseline.xml ^
                                     --auto
                                 exit /b 0
                             '''
@@ -197,60 +195,34 @@ pipeline {
                             zap-api-scan.py ^
                             -t http://localhost:8090/v3/api-docs ^
                             -f openapi ^
-                            -J zap-api-scan-%TIMESTAMP%.json ^
-                            -r zap-api-scan-%TIMESTAMP%.html ^
-                            -x zap-api-scan-%TIMESTAMP%.xml || echo "API scan completed"
+                            -J zap-api-scan.json ^
+                            -r zap-api-scan.html ^
+                            -x zap-api-scan.xml || echo "API scan completed"
                         exit /b 0
                     '''
                 }
             }
         }
 
-        // ========== OWASP ZAP FULL SCANS ==========
-        stage('OWASP ZAP Full Scans') {
-            parallel {
-                stage('ZAP Full Scan - Frontend') {
-                    steps {
-                        script {
-                            echo "🕷️ OWASP ZAP - Full Scan Frontend (análisis profundo)..."
-                            
-                            bat '''
-                                docker run --rm ^
-                                    -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
-                                    --network host ^
-                                    -t zaproxy/zap-stable ^
-                                    zap-full-scan.py ^
-                                    -t http://localhost:8070 ^
-                                    -J zap-full-frontend-%TIMESTAMP%.json ^
-                                    -r zap-full-frontend-%TIMESTAMP%.html ^
-                                    -x zap-full-frontend-%TIMESTAMP%.xml ^
-                                    --auto
-                                exit /b 0
-                            '''
-                        }
-                    }
-                }
-                
-                stage('ZAP Full Scan - Backend') {
-                    steps {
-                        script {
-                            echo "🕷️ OWASP ZAP - Full Scan Backend (análisis profundo)..."
-                            
-                            bat '''
-                                docker run --rm ^
-                                    -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
-                                    --network host ^
-                                    -t zaproxy/zap-stable ^
-                                    zap-full-scan.py ^
-                                    -t http://localhost:8090 ^
-                                    -J zap-full-backend-%TIMESTAMP%.json ^
-                                    -r zap-full-backend-%TIMESTAMP%.html ^
-                                    -x zap-full-backend-%TIMESTAMP%.xml ^
-                                    --auto
-                                exit /b 0
-                            '''
-                        }
-                    }
+        // ========== OWASP ZAP FULL SCANS (OPCIONAL) ==========
+        stage('OWASP ZAP Full Scan - Frontend') {
+            steps {
+                script {
+                    echo "🕷️ OWASP ZAP - Full Scan Frontend (análisis profundo)..."
+                    
+                    bat '''
+                        docker run --rm ^
+                            -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
+                            --network host ^
+                            -t zaproxy/zap-stable ^
+                            zap-full-scan.py ^
+                            -t http://localhost:8070 ^
+                            -J zap-full-frontend.json ^
+                            -r zap-full-frontend.html ^
+                            -x zap-full-frontend.xml ^
+                            --auto
+                        exit /b 0
+                    '''
                 }
             }
         }
@@ -261,39 +233,37 @@ pipeline {
                 script {
                     echo "📊 Generando resumen de vulnerabilidades..."
                     
-                    // Resumen simple sin loops complejos
+                    // Resumen simple sin timestamps
                     bat '''
-                        echo === RESUMEN DE SEGURIDAD OWASP ZAP === > "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo Fecha: %DATE% %TIME% >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo Pipeline: OWASP ZAP Security Scan >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo. >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo === SCANS EJECUTADOS === >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo ✅ ZAP Baseline Frontend >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo ✅ ZAP Baseline Backend >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo ✅ ZAP API Scan Backend >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo ✅ ZAP Full Scan Frontend >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo ✅ ZAP Full Scan Backend >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo. >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo === COMO REVISAR VULNERABILIDADES === >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo 1. Descarga los archivos .HTML desde Jenkins Build Artifacts >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo 2. Abre cada archivo .HTML en tu navegador web >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo 3. Busca la seccion "ALERTS" o "SUMMARY" >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo 4. Prioriza por severidad: HIGH ^> MEDIUM ^> LOW ^> INFO >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo 5. Lee las recomendaciones de cada vulnerabilidad >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo. >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo === ARCHIVOS IMPORTANTES === >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo - SECURITY-SUMMARY.txt: Este archivo (instrucciones) >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo - zap-frontend-baseline.html: Vulnerabilidades Frontend >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo - zap-backend-baseline.html: Vulnerabilidades Backend >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo - zap-api-scan.html: Vulnerabilidades API REST >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo - zap-full-*.html: Análisis profundo (más detallado) >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo. >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        echo === TODOS LOS ARCHIVOS GENERADOS === >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
-                        dir /b "%REPORTS_DIR%" >> "%REPORTS_DIR%/SECURITY-SUMMARY-%TIMESTAMP%.txt"
+                        echo === RESUMEN DE SEGURIDAD OWASP ZAP === > "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo Fecha: %DATE% %TIME% >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo Pipeline: OWASP ZAP Security Scan >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo. >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo === SCANS EJECUTADOS === >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo ✅ ZAP Baseline Frontend >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo ✅ ZAP Baseline Backend >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo ✅ ZAP API Scan Backend >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo ✅ ZAP Full Scan Frontend >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo. >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo === ARCHIVOS PRINCIPALES PARA REVISAR === >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo 📋 SECURITY-SUMMARY.txt: Este archivo (instrucciones) >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo 🌐 zap-frontend-baseline.html: Vulnerabilidades Frontend >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo 🌐 zap-backend-baseline.html: Vulnerabilidades Backend >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo 🌐 zap-api-scan.html: Vulnerabilidades API REST >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo 🌐 zap-full-frontend.html: Análisis profundo Frontend >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo. >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo === COMO REVISAR === >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo 1. Descarga los archivos .HTML desde Jenkins Build Artifacts >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo 2. Abre cada archivo .HTML en tu navegador web >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo 3. Busca la seccion "ALERTS" para ver vulnerabilidades >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo 4. Prioriza: HIGH ^> MEDIUM ^> LOW ^> INFO >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo 5. Lee las recomendaciones de cada vulnerabilidad >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo. >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        echo === TODOS LOS ARCHIVOS === >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                        dir /b "%REPORTS_DIR%" >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
                     '''
                     
-                    echo "📊 Resumen de seguridad generado exitosamente"
-                    echo "📁 Archivo principal: SECURITY-SUMMARY.txt"
+                    echo "📊 Resumen de seguridad generado: SECURITY-SUMMARY.txt"
                 }
             }
         }
@@ -306,43 +276,14 @@ pipeline {
                     // Listar todos los reportes
                     bat "dir %REPORTS_DIR%"
                     
-                    // Crear resumen de vulnerabilidades detallado
-                    bat '''
-                        echo === RESUMEN DETALLADO DE VULNERABILIDADES OWASP ZAP === > "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo Fecha: %DATE% %TIME% >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo Pipeline: Docker Compose + OWASP ZAP >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo. >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo === SCANS EJECUTADOS === >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo ✅ ZAP Baseline Frontend >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo ✅ ZAP Baseline Backend >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo ✅ ZAP API Scan Backend >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo ✅ ZAP Full Scan Frontend >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo ✅ ZAP Full Scan Backend >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo. >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo === COMO REVISAR VULNERABILIDADES === >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo 1. Descarga los archivos .HTML desde Jenkins Artifacts >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo 2. Abre los .HTML en tu navegador >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo 3. Revisa seccion "Alerts" para vulnerabilidades >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo 4. Prioriza: HIGH ^> MEDIUM ^> LOW ^> INFO >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo. >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo === ARCHIVOS IMPORTANTES === >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo - VULNERABILITIES-SUMMARY: Este archivo >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo - CRITICAL-VULNERABILITIES: Vulnerabilidades críticas >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo - VULNERABILITY-COUNT: Conteo por tipo >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo - zap-***.html: Reportes visuales completos >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo. >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        echo === ARCHIVOS GENERADOS === >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                        dir /b "%REPORTS_DIR%" >> "%REPORTS_DIR%/VULNERABILITIES-SUMMARY-%TIMESTAMP%.txt"
-                    '''
-                    
                     // Contar archivos de reportes
                     def reportCount = bat(script: 'dir /b "%REPORTS_DIR%" | find /c ".html"', returnStdout: true).trim()
                     
                     echo "✅ Análisis completo de seguridad OWASP ZAP finalizado"
                     echo "📊 Tipos de reportes: JSON (datos), HTML (visual), XML (integración)"
                     echo "🔍 ${reportCount} reportes HTML generados para revisión"
-                    echo "📁 IMPORTANTE: Descarga y abre los archivos .HTML para ver vulnerabilidades"
-                    echo "🎯 Revisa especialmente: CRITICAL-VULNERABILITIES.txt y VULNERABILITY-COUNT.txt"
+                    echo "📁 ARCHIVO PRINCIPAL: SECURITY-SUMMARY.txt"
+                    echo "🌐 ARCHIVOS CLAVE: zap-frontend-baseline.html, zap-backend-baseline.html"
                 }
             }
         }
@@ -361,8 +302,20 @@ pipeline {
                 echo "📁 Archivando reportes de seguridad OWASP ZAP..."
                 archiveArtifacts artifacts: "${REPORTS_DIR}/**/*", allowEmptyArchive: true
                 
+                // Publicar reportes HTML como links accesibles
+                publishHTML([
+                    allowMissing: false,
+                    alwaysLinkToLastBuild: true,
+                    keepAll: true,
+                    reportDir: "${REPORTS_DIR}",
+                    reportFiles: "*.html",
+                    reportName: "OWASP ZAP Security Reports",
+                    reportTitles: "Security Vulnerability Reports"
+                ])
+                
                 echo "🎯 PIPELINE OWASP ZAP COMPLETADO"
                 echo "📊 Reportes disponibles en Jenkins artifacts"
+                echo "🌐 Reportes HTML accesibles desde Jenkins UI"
                 echo "🕷️ Análisis dinámico de seguridad web completo"
             }
         }
@@ -370,6 +323,7 @@ pipeline {
         success {
             echo "✅ Pipeline OWASP ZAP ejecutado exitosamente"
             echo "🔍 Revisa los reportes HTML para ver vulnerabilidades detalladas"
+            echo "📋 Archivo SECURITY-SUMMARY.txt contiene instrucciones completas"
         }
         
         failure {
