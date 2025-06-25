@@ -33,17 +33,44 @@ pipeline {
                 script {
                     echo "🐳 Desplegando aplicaciones con Docker Compose..."
                     
+                    // Verificar que Docker Compose esté disponible
+                    bat '''
+                        docker --version
+                        docker-compose --version
+                    '''
+                    
+                    // Verificar que el archivo compose2.yml existe
+                    bat '''
+                        if exist %COMPOSE_FILE% (
+                            echo "✅ Docker Compose file found: %COMPOSE_FILE%"
+                        ) else (
+                            echo "❌ Docker Compose file NOT found: %COMPOSE_FILE%"
+                            exit 1
+                        )
+                    '''
+                    
                     // Limpiar contenedores anteriores
                     bat '''
+                        echo "🧹 Cleaning up previous containers..."
                         docker-compose -f %COMPOSE_FILE% down --remove-orphans || echo "No previous containers to remove"
                     '''
                     
-                    // Levantar servicios
+                    // Levantar servicios con logs detallados
                     bat '''
+                        echo "🚀 Starting services with Docker Compose..."
                         docker-compose -f %COMPOSE_FILE% up -d
                     '''
                     
-                    echo "⏳ Esperando que los servicios estén listos..."
+                    // Verificar que los containers se levantaron
+                    bat '''
+                        echo "📊 Checking container status..."
+                        docker-compose -f %COMPOSE_FILE% ps
+                        
+                        echo "📋 Container logs preview:"
+                        docker-compose -f %COMPOSE_FILE% logs --tail=10
+                    '''
+                    
+                    echo "⏳ Services deployed, waiting for readiness..."
                 }
             }
         }
@@ -53,27 +80,57 @@ pipeline {
                 script {
                     echo "🔍 Verificando que las aplicaciones estén listas..."
                     
-                    // Esperar que los containers estén running
+                    // Esperar que los containers estén running (comando compatible con Windows)
                     bat '''
-                        timeout 30 > nul
                         echo "Waiting for containers to be fully ready..."
+                        ping localhost -n 31 > nul
                     '''
                     
-                    // Verificar frontend
-                    retry(5) {
-                        bat '''
-                            curl -f http://localhost:8070 || (echo "Frontend not ready, retrying..." && timeout 10 > nul && exit 1)
-                        '''
+                    // Verificar estado de containers
+                    bat '''
+                        echo "Checking container status..."
+                        docker-compose -f %COMPOSE_FILE% ps
+                    '''
+                    
+                    // Verificar frontend con reintentos
+                    script {
+                        def frontendReady = false
+                        for (int i = 0; i < 5; i++) {
+                            def result = bat(script: 'curl -f http://localhost:8070', returnStatus: true)
+                            if (result == 0) {
+                                frontendReady = true
+                                echo "✅ Frontend is ready!"
+                                break
+                            } else {
+                                echo "Frontend not ready yet, attempt ${i+1}/5"
+                                bat 'ping localhost -n 11 > nul'  // Wait 10 seconds
+                            }
+                        }
+                        if (!frontendReady) {
+                            echo "⚠️ Frontend not responding after 5 attempts"
+                        }
                     }
                     
-                    // Verificar backend
-                    retry(5) {
-                        bat '''
-                            curl -f http://localhost:8090/actuator/health || (echo "Backend not ready, retrying..." && timeout 10 > nul && exit 1)
-                        '''
+                    // Verificar backend con reintentos
+                    script {
+                        def backendReady = false
+                        for (int i = 0; i < 5; i++) {
+                            def result = bat(script: 'curl -f http://localhost:8090/actuator/health', returnStatus: true)
+                            if (result == 0) {
+                                backendReady = true
+                                echo "✅ Backend is ready!"
+                                break
+                            } else {
+                                echo "Backend not ready yet, attempt ${i+1}/5"
+                                bat 'ping localhost -n 11 > nul'  // Wait 10 seconds
+                            }
+                        }
+                        if (!backendReady) {
+                            echo "⚠️ Backend not responding after 5 attempts"
+                        }
                     }
                     
-                    echo "✅ Todas las aplicaciones están listas para el escaneo"
+                    echo "🔍 Continuing with security scans..."
                 }
             }
         }
