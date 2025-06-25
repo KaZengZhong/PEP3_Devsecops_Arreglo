@@ -151,8 +151,8 @@ pipeline {
                             bat 'docker login -u %DOCKER_USERNAME% -p %DOCKER_PASSWORD%'
                         }
                         
-                        // Descargar imagen de OWASP ZAP
-                        bat 'docker pull owasp/zap2docker-stable:latest'
+                        // Descargar imagen alternativa de OWASP ZAP (más confiable)
+                        bat 'docker pull zaproxy/zap-stable:latest'
                         
                     } catch (Exception e) {
                         echo "Warning: Could not login to Docker Hub or pull ZAP image: ${e.message}"
@@ -205,7 +205,7 @@ pipeline {
                     bat '''
                         docker run --rm ^
                             -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
-                            -t owasp/zap2docker-stable ^
+                            -t zaproxy/zap-stable ^
                             zap-baseline.py ^
                             -t http://host.docker.internal:8070 ^
                             -J zap-frontend-baseline-%TIMESTAMP%.json ^
@@ -234,7 +234,7 @@ pipeline {
                     bat '''
                         docker run --rm ^
                             -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
-                            -t owasp/zap2docker-stable ^
+                            -t zaproxy/zap-stable ^
                             zap-baseline.py ^
                             -t http://host.docker.internal:8090 ^
                             -J zap-backend-baseline-%TIMESTAMP%.json ^
@@ -263,7 +263,7 @@ pipeline {
                         REM Intentar scan de API si hay documentación disponible
                         docker run --rm ^
                             -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
-                            -t owasp/zap2docker-stable ^
+                            -t zaproxy/zap-stable ^
                             zap-api-scan.py ^
                             -t http://host.docker.internal:8090/v3/api-docs ^
                             -f openapi ^
@@ -292,7 +292,7 @@ pipeline {
                         bat '''
                             docker run --rm ^
                                 -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
-                                -t owasp/zap2docker-stable ^
+                                -t zaproxy/zap-stable ^
                                 zap-full-scan.py ^
                                 -t http://host.docker.internal:8070 ^
                                 -J zap-full-scan-%TIMESTAMP%.json ^
