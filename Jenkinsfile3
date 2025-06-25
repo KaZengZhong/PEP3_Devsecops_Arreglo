@@ -53,24 +53,6 @@ pipeline {
             }
         }
 
-        stage('ZAP Frontend Scan') {
-            steps {
-                bat '''
-                    echo "🕷️ ZAP Frontend Baseline Scan..."
-                    docker run --rm ^
-                        -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
-                        --network host ^
-                        zaproxy/zap-stable ^
-                        zap-baseline.py ^
-                        -t http://localhost:8070 ^
-                        -r frontend-report.html ^
-                        -J frontend-report.json ^
-                        --auto || echo "Frontend scan completed with findings"
-                    echo "✅ Frontend scan terminó - verificar reportes para vulnerabilidades"
-                '''
-            }
-        }
-
         stage('Verify Backend Health') {
             steps {
                 script {
@@ -100,6 +82,29 @@ pipeline {
                 }
             }
         }
+
+        stage('ZAP Frontend Scan') {
+            steps {
+                bat '''
+                    echo "🕷️ ZAP Frontend Baseline Scan..."
+                    docker run --rm ^
+                        -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
+                        --network host ^
+                        zaproxy/zap-stable ^
+                        zap-baseline.py ^
+                        -t http://localhost:8070 ^
+                        -r frontend-report.html ^
+                        -J frontend-report.json ^
+                        --auto || echo "Frontend scan completed with findings"
+                    echo "✅ Frontend scan terminó - verificar reportes para vulnerabilidades"
+                '''
+            }
+        }
+
+        stage('ZAP Backend Scan') {
+            options {
+                timeout(time: 5, unit: 'MINUTES')
+            }
             steps {
                 bat '''
                     echo "🕷️ ZAP Backend Baseline Scan..."
@@ -111,7 +116,8 @@ pipeline {
                         -t http://localhost:8090 ^
                         -r backend-report.html ^
                         -J backend-report.json ^
-                        --auto || echo "Backend scan completed"
+                        --auto || echo "Backend scan completed with findings"
+                    echo "✅ Backend scan terminó - verificar reportes para vulnerabilidades"
                 '''
             }
         }
