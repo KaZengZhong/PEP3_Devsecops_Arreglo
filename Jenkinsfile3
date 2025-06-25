@@ -79,9 +79,7 @@ pipeline {
                     
                     // Crear directorio de reportes
                     bat "if not exist \"${env.REPORTS_DIR}\" mkdir ${env.REPORTS_DIR}"
-                }
-            }
-        }
+        stage('Wait for Application Ready') {
 
         stage('Checkout Repository') {
             steps {
@@ -140,7 +138,30 @@ pipeline {
             }
         }
 
-        stage('Wait for Application Ready') {
+        stage('Prepare OWASP ZAP') {
+            steps {
+                script {
+                    echo "🔐 Preparing OWASP ZAP Docker image..."
+                    
+                    try {
+                        // Login to Docker Hub para evitar rate limits
+                        withCredentials([usernamePassword(credentialsId: 'docker-credentials', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                            bat 'docker login -u %DOCKER_USERNAME% -p %DOCKER_PASSWORD%'
+                        }
+                        
+                        // Descargar imagen de OWASP ZAP
+                        bat 'docker pull owasp/zap2docker-stable:latest'
+                        
+                    } catch (Exception e) {
+                        echo "Warning: Could not login to Docker Hub or pull ZAP image: ${e.message}"
+                        echo "Attempting to use alternative ZAP image..."
+                        
+                        // Intentar imagen alternativa
+                        bat 'docker pull zaproxy/zap-stable:latest || echo "Alternative image also failed"'
+                    }
+                }
+            }
+        }
             steps {
                 script {
                     echo "⏳ Waiting for application to be ready..."
@@ -151,8 +172,8 @@ pipeline {
                     
                     // Verificación básica (opcional)
                     try {
-                        bat 'curl -f %FRONTEND_URL% || echo "Frontend check completed"'
-                        bat 'curl -f %BACKEND_URL%/actuator/health || echo "Backend check completed"'
+                        bat 'curl -f http://localhost:8070 || echo "Frontend check completed"'
+                        bat 'curl -f http://localhost:8090/actuator/health || echo "Backend check completed"'
                     } catch (Exception e) {
                         echo "Health checks completed with warnings: ${e.message}"
                     }
