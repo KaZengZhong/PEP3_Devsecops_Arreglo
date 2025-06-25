@@ -12,10 +12,12 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addMapping("/**")
                 .allowedOrigins(
                         "http://localhost:5173",  // Puerto de Vite en desarrollo
-                        "http://localhost:8070"
+                        "http://localhost:8070",  // Puerto de tu frontend
+                        "http://host.docker.internal:8070",  // ← NUEVO: Para Docker
+                        "*"  // ← NUEVO: Permite cualquier origen (solo desarrollo)
                 )
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH")
                 .allowedHeaders("*")
-                .allowCredentials(true);
+                .allowCredentials(false);  // ← CAMBIADO: false para permitir wildcard
     }
 }

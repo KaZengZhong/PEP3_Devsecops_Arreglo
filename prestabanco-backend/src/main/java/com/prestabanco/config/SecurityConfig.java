@@ -16,9 +16,10 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .cors().and()  // Habilita CORS en Spring Security
-                .csrf().ignoringRequestMatchers("/api/**").and()  // Ignora CSRF solo para APIs
+                .csrf().ignoringRequestMatchers("/api/**", "/actuator/**").and()  // Ignora CSRF para APIs y Actuator
                 .authorizeHttpRequests()
                 .requestMatchers("/api/**").permitAll()
+                .requestMatchers("/actuator/**").permitAll()  // ← ESTO ES LO NUEVO
                 .anyRequest().authenticated();
 
         return http.build();
