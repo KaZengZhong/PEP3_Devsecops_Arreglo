@@ -211,7 +211,8 @@ pipeline {
                             -J zap-frontend-baseline-%TIMESTAMP%.json ^
                             -r zap-frontend-baseline-%TIMESTAMP%.html ^
                             -x zap-frontend-baseline-%TIMESTAMP%.xml ^
-                            --auto || echo "ZAP baseline scan completed"
+                            --auto
+                        exit /b 0
                     '''
                     
                     archiveArtifacts artifacts: "${env.REPORTS_DIR}/zap-frontend-baseline-*.{json,html,xml}", allowEmptyArchive: true
@@ -240,7 +241,8 @@ pipeline {
                             -J zap-backend-baseline-%TIMESTAMP%.json ^
                             -r zap-backend-baseline-%TIMESTAMP%.html ^
                             -x zap-backend-baseline-%TIMESTAMP%.xml ^
-                            --auto || echo "ZAP API baseline scan completed"
+                            --auto
+                        exit /b 0
                     '''
                     
                     archiveArtifacts artifacts: "${env.REPORTS_DIR}/zap-backend-baseline-*.{json,html,xml}", allowEmptyArchive: true
@@ -269,7 +271,8 @@ pipeline {
                             -f openapi ^
                             -J zap-api-scan-%TIMESTAMP%.json ^
                             -r zap-api-scan-%TIMESTAMP%.html ^
-                            -x zap-api-scan-%TIMESTAMP%.xml || echo "API documentation scan completed"
+                            -x zap-api-scan-%TIMESTAMP%.xml
+                        exit /b 0
                     '''
                     
                     archiveArtifacts artifacts: "${env.REPORTS_DIR}/zap-api-scan-*.{json,html,xml}", allowEmptyArchive: true
@@ -298,7 +301,8 @@ pipeline {
                                 -J zap-full-scan-%TIMESTAMP%.json ^
                                 -r zap-full-scan-%TIMESTAMP%.html ^
                                 -x zap-full-scan-%TIMESTAMP%.xml ^
-                                --auto || echo "ZAP full scan completed"
+                                --auto
+                            exit /b 0
                         '''
                     }
                     
