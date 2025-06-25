@@ -15,320 +15,219 @@ pipeline {
         
         stage('Preparation') {
             steps {
-                script {
-                    // Crear directorio para reportes
-                    bat "if not exist %REPORTS_DIR% mkdir %REPORTS_DIR%"
-                    
-                    echo "=== PIPELINE DE SEGURIDAD OWASP ZAP ==="
-                    echo "🐳 Desplegando aplicaciones automáticamente"
-                    echo "🕷️ Análisis dinámico completo con OWASP ZAP"
-                }
+                bat "if not exist ${env.REPORTS_DIR} mkdir ${env.REPORTS_DIR}"
+                echo "=== PIPELINE DE SEGURIDAD OWASP ZAP ==="
+                echo "🐳 Desplegando aplicaciones automáticamente"
+                echo "🕷️ Análisis dinámico completo con OWASP ZAP"
             }
         }
 
-        // ========== DESPLIEGUE AUTOMÁTICO ==========
         stage('Deploy Applications') {
             steps {
-                script {
-                    echo "🐳 Desplegando aplicaciones con Docker Compose..."
-                    
-                    // Verificar que Docker Compose esté disponible
-                    bat '''
-                        docker --version
-                        docker-compose --version
-                    '''
-                    
-                    // Verificar que el archivo compose2.yml existe
-                    bat '''
-                        if exist %COMPOSE_FILE% (
-                            echo "✅ Docker Compose file found: %COMPOSE_FILE%"
-                        ) else (
-                            echo "❌ Docker Compose file NOT found: %COMPOSE_FILE%"
-                            exit 1
-                        )
-                    '''
-                    
-                    // Limpiar contenedores anteriores
-                    bat '''
-                        echo "🧹 Cleaning up previous containers..."
-                        docker-compose -f %COMPOSE_FILE% down --remove-orphans || echo "No previous containers to remove"
-                    '''
-                    
-                    // Levantar servicios con logs detallados
-                    bat '''
-                        echo "🚀 Starting services with Docker Compose..."
-                        docker-compose -f %COMPOSE_FILE% up -d
-                    '''
-                    
-                    // Verificar que los containers se levantaron
-                    bat '''
-                        echo "📊 Checking container status..."
-                        docker-compose -f %COMPOSE_FILE% ps
-                        
-                        echo "📋 Container logs preview:"
-                        docker-compose -f %COMPOSE_FILE% logs --tail=10
-                    '''
-                    
-                    echo "⏳ Services deployed, waiting for readiness..."
-                }
+                echo "🐳 Desplegando aplicaciones con Docker Compose..."
+                
+                bat '''
+                    docker --version
+                    docker-compose --version
+                '''
+                
+                bat '''
+                    if exist %COMPOSE_FILE% (
+                        echo "✅ Docker Compose file found: %COMPOSE_FILE%"
+                    ) else (
+                        echo "❌ Docker Compose file NOT found: %COMPOSE_FILE%"
+                        exit 1
+                    )
+                '''
+                
+                bat '''
+                    echo "🧹 Cleaning up previous containers..."
+                    docker-compose -f %COMPOSE_FILE% down --remove-orphans || echo "No previous containers to remove"
+                '''
+                
+                bat '''
+                    echo "🚀 Starting services with Docker Compose..."
+                    docker-compose -f %COMPOSE_FILE% up -d
+                '''
+                
+                bat '''
+                    echo "📊 Checking container status..."
+                    docker-compose -f %COMPOSE_FILE% ps
+                '''
+                
+                echo "⏳ Services deployed, waiting for readiness..."
             }
         }
         
         stage('Wait for Applications Ready') {
             steps {
+                echo "🔍 Verificando que las aplicaciones estén listas..."
+                
+                bat '''
+                    echo "Waiting for containers to be fully ready..."
+                    ping localhost -n 31 > nul
+                '''
+                
+                bat '''
+                    echo "Checking container status..."
+                    docker-compose -f %COMPOSE_FILE% ps
+                '''
+                
                 script {
-                    echo "🔍 Verificando que las aplicaciones estén listas..."
-                    
-                    // Esperar que los containers estén running (comando compatible con Windows)
-                    bat '''
-                        echo "Waiting for containers to be fully ready..."
-                        ping localhost -n 31 > nul
-                    '''
-                    
-                    // Verificar estado de containers
-                    bat '''
-                        echo "Checking container status..."
-                        docker-compose -f %COMPOSE_FILE% ps
-                    '''
-                    
-                    // Verificar frontend con reintentos
-                    script {
-                        def frontendReady = false
-                        for (int i = 0; i < 5; i++) {
-                            def result = bat(script: 'curl -f http://localhost:8070', returnStatus: true)
-                            if (result == 0) {
-                                frontendReady = true
-                                echo "✅ Frontend is ready!"
-                                break
-                            } else {
-                                echo "Frontend not ready yet, attempt ${i+1}/5"
-                                bat 'ping localhost -n 11 > nul'  // Wait 10 seconds
-                            }
-                        }
-                        if (!frontendReady) {
-                            echo "⚠️ Frontend not responding after 5 attempts"
+                    def frontendReady = false
+                    for (int i = 0; i < 5; i++) {
+                        def result = bat(script: 'curl -f http://localhost:8070', returnStatus: true)
+                        if (result == 0) {
+                            frontendReady = true
+                            echo "✅ Frontend is ready!"
+                            break
+                        } else {
+                            echo "Frontend not ready yet, attempt ${i+1}/5"
+                            bat 'ping localhost -n 11 > nul'
                         }
                     }
-                    
-                    // Verificar backend con reintentos
-                    script {
-                        def backendReady = false
-                        for (int i = 0; i < 5; i++) {
-                            def result = bat(script: 'curl -f http://localhost:8090/actuator/health', returnStatus: true)
-                            if (result == 0) {
-                                backendReady = true
-                                echo "✅ Backend is ready!"
-                                break
-                            } else {
-                                echo "Backend not ready yet, attempt ${i+1}/5"
-                                bat 'ping localhost -n 11 > nul'  // Wait 10 seconds
-                            }
-                        }
-                        if (!backendReady) {
-                            echo "⚠️ Backend not responding after 5 attempts"
-                        }
-                    }
-                    
-                    echo "🔍 Continuing with security scans..."
-                }
-            }
-        }
-
-        stage('OWASP ZAP Baseline Scans') {
-            parallel {
-                stage('ZAP Baseline - Frontend') {
-                    steps {
-                        script {
-                            echo "🕷️ OWASP ZAP - Baseline Scan Frontend..."
-                            
-                            bat '''
-                                docker run --rm ^
-                                    -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
-                                    --network host ^
-                                    -t zaproxy/zap-stable ^
-                                    zap-baseline.py ^
-                                    -t http://localhost:8070 ^
-                                    -J zap-frontend-baseline.json ^
-                                    -r zap-frontend-baseline.html ^
-                                    -x zap-frontend-baseline.xml ^
-                                    --auto
-                                exit /b 0
-                            '''
-                        }
+                    if (!frontendReady) {
+                        echo "⚠️ Frontend not responding after 5 attempts"
                     }
                 }
                 
-                stage('ZAP Baseline - Backend') {
-                    steps {
-                        script {
-                            echo "🕷️ OWASP ZAP - Baseline Scan Backend..."
-                            
-                            bat '''
-                                docker run --rm ^
-                                    -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
-                                    --network host ^
-                                    -t zaproxy/zap-stable ^
-                                    zap-baseline.py ^
-                                    -t http://localhost:8090 ^
-                                    -J zap-backend-baseline.json ^
-                                    -r zap-backend-baseline.html ^
-                                    -x zap-backend-baseline.xml ^
-                                    --auto
-                                exit /b 0
-                            '''
+                script {
+                    def backendReady = false
+                    for (int i = 0; i < 5; i++) {
+                        def result = bat(script: 'curl -f http://localhost:8090/actuator/health', returnStatus: true)
+                        if (result == 0) {
+                            backendReady = true
+                            echo "✅ Backend is ready!"
+                            break
+                        } else {
+                            echo "Backend not ready yet, attempt ${i+1}/5"
+                            bat 'ping localhost -n 11 > nul'
                         }
                     }
+                    if (!backendReady) {
+                        echo "⚠️ Backend not responding after 5 attempts"
+                    }
                 }
-            }
-        }
-        
-        stage('OWASP ZAP API Scan') {
-            steps {
-                script {
-                    echo "🕷️ OWASP ZAP - API Security Scan..."
-                    
-                    bat '''
-                        docker run --rm ^
-                            -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
-                            --network host ^
-                            -t zaproxy/zap-stable ^
-                            zap-api-scan.py ^
-                            -t http://localhost:8090/v3/api-docs ^
-                            -f openapi ^
-                            -J zap-api-scan.json ^
-                            -r zap-api-scan.html ^
-                            -x zap-api-scan.xml || echo "API scan completed"
-                        exit /b 0
-                    '''
-                }
+                
+                echo "🔍 Continuing with security scans..."
             }
         }
 
-        // ========== OWASP ZAP FULL SCANS (OPCIONAL) ==========
-        stage('OWASP ZAP Full Scan - Frontend') {
+        stage('ZAP Baseline - Frontend') {
             steps {
-                script {
-                    echo "🕷️ OWASP ZAP - Full Scan Frontend (análisis profundo)..."
-                    
-                    bat '''
-                        docker run --rm ^
-                            -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
-                            --network host ^
-                            -t zaproxy/zap-stable ^
-                            zap-full-scan.py ^
-                            -t http://localhost:8070 ^
-                            -J zap-full-frontend.json ^
-                            -r zap-full-frontend.html ^
-                            -x zap-full-frontend.xml ^
-                            --auto
-                        exit /b 0
-                    '''
-                }
-            }
-        }
-
-        // ========== ANÁLISIS DE RESULTADOS ==========
-        stage('Vulnerability Summary') {
-            steps {
-                script {
-                    echo "📊 Generando resumen de vulnerabilidades..."
-                    
-                    // Resumen simple sin timestamps
-                    bat '''
-                        echo === RESUMEN DE SEGURIDAD OWASP ZAP === > "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo Fecha: %DATE% %TIME% >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo Pipeline: OWASP ZAP Security Scan >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo. >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo === SCANS EJECUTADOS === >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo ✅ ZAP Baseline Frontend >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo ✅ ZAP Baseline Backend >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo ✅ ZAP API Scan Backend >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo ✅ ZAP Full Scan Frontend >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo. >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo === ARCHIVOS PRINCIPALES PARA REVISAR === >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo 📋 SECURITY-SUMMARY.txt: Este archivo (instrucciones) >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo 🌐 zap-frontend-baseline.html: Vulnerabilidades Frontend >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo 🌐 zap-backend-baseline.html: Vulnerabilidades Backend >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo 🌐 zap-api-scan.html: Vulnerabilidades API REST >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo 🌐 zap-full-frontend.html: Análisis profundo Frontend >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo. >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo === COMO REVISAR === >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo 1. Descarga los archivos .HTML desde Jenkins Build Artifacts >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo 2. Abre cada archivo .HTML en tu navegador web >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo 3. Busca la seccion "ALERTS" para ver vulnerabilidades >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo 4. Prioriza: HIGH ^> MEDIUM ^> LOW ^> INFO >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo 5. Lee las recomendaciones de cada vulnerabilidad >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo. >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        echo === TODOS LOS ARCHIVOS === >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                        dir /b "%REPORTS_DIR%" >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
-                    '''
-                    
-                    echo "📊 Resumen de seguridad generado: SECURITY-SUMMARY.txt"
-                }
+                echo "🕷️ OWASP ZAP - Baseline Scan Frontend..."
+                
+                bat '''
+                    docker run --rm ^
+                        -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
+                        --network host ^
+                        -t zaproxy/zap-stable ^
+                        zap-baseline.py ^
+                        -t http://localhost:8070 ^
+                        -J zap-frontend-baseline.json ^
+                        -r zap-frontend-baseline.html ^
+                        -x zap-frontend-baseline.xml ^
+                        --auto
+                    exit /b 0
+                '''
             }
         }
         
-        stage('Security Analysis & Reports') {
+        stage('ZAP Baseline - Backend') {
             steps {
-                script {
-                    echo "📊 Generando análisis consolidado de vulnerabilidades..."
-                    
-                    // Listar todos los reportes
-                    bat "dir %REPORTS_DIR%"
-                    
-                    // Contar archivos de reportes
-                    def reportCount = bat(script: 'dir /b "%REPORTS_DIR%" | find /c ".html"', returnStdout: true).trim()
-                    
-                    echo "✅ Análisis completo de seguridad OWASP ZAP finalizado"
-                    echo "📊 Tipos de reportes: JSON (datos), HTML (visual), XML (integración)"
-                    echo "🔍 ${reportCount} reportes HTML generados para revisión"
-                    echo "📁 ARCHIVO PRINCIPAL: SECURITY-SUMMARY.txt"
-                    echo "🌐 ARCHIVOS CLAVE: zap-frontend-baseline.html, zap-backend-baseline.html"
-                }
+                echo "🕷️ OWASP ZAP - Baseline Scan Backend..."
+                
+                bat '''
+                    docker run --rm ^
+                        -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
+                        --network host ^
+                        -t zaproxy/zap-stable ^
+                        zap-baseline.py ^
+                        -t http://localhost:8090 ^
+                        -J zap-backend-baseline.json ^
+                        -r zap-backend-baseline.html ^
+                        -x zap-backend-baseline.xml ^
+                        --auto
+                    exit /b 0
+                '''
+            }
+        }
+        
+        stage('ZAP API Scan') {
+            steps {
+                echo "🕷️ OWASP ZAP - API Security Scan..."
+                
+                bat '''
+                    docker run --rm ^
+                        -v "%cd%\\%REPORTS_DIR%:/zap/wrk/:rw" ^
+                        --network host ^
+                        -t zaproxy/zap-stable ^
+                        zap-api-scan.py ^
+                        -t http://localhost:8090/v3/api-docs ^
+                        -f openapi ^
+                        -J zap-api-scan.json ^
+                        -r zap-api-scan.html ^
+                        -x zap-api-scan.xml || echo "API scan completed"
+                    exit /b 0
+                '''
+            }
+        }
+
+        stage('Generate Security Summary') {
+            steps {
+                echo "📊 Generando resumen de vulnerabilidades..."
+                
+                bat '''
+                    echo === RESUMEN DE SEGURIDAD OWASP ZAP === > "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                    echo Fecha: %DATE% %TIME% >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                    echo Pipeline: OWASP ZAP Security Scan >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                    echo. >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                    echo === SCANS EJECUTADOS === >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                    echo ✅ ZAP Baseline Frontend >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                    echo ✅ ZAP Baseline Backend >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                    echo ✅ ZAP API Scan Backend >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                    echo. >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                    echo === ARCHIVOS PRINCIPALES === >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                    echo 📋 SECURITY-SUMMARY.txt: Este archivo >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                    echo 🌐 zap-frontend-baseline.html: Vulnerabilidades Frontend >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                    echo 🌐 zap-backend-baseline.html: Vulnerabilidades Backend >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                    echo 🌐 zap-api-scan.html: Vulnerabilidades API >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                    echo. >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                    echo === COMO REVISAR === >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                    echo 1. Descarga los archivos .HTML >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                    echo 2. Abre en navegador >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                    echo 3. Busca seccion ALERTS >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                    echo 4. Prioriza: HIGH ^> MEDIUM ^> LOW >> "%REPORTS_DIR%/SECURITY-SUMMARY.txt"
+                '''
+                
+                bat "dir %REPORTS_DIR%"
+                
+                echo "📊 Resumen generado: SECURITY-SUMMARY.txt"
             }
         }
     }
     
     post {
         always {
-            script {
-                echo "🧹 Limpiando recursos..."
-                
-                // Bajar containers
-                bat '''
-                    docker-compose -f %COMPOSE_FILE% down --remove-orphans || echo "Cleanup completed"
-                '''
-                
-                echo "📁 Archivando reportes de seguridad OWASP ZAP..."
-                archiveArtifacts artifacts: "${REPORTS_DIR}/**/*", allowEmptyArchive: true
-                
-                // Publicar reportes HTML como links accesibles
-                publishHTML([
-                    allowMissing: false,
-                    alwaysLinkToLastBuild: true,
-                    keepAll: true,
-                    reportDir: "${REPORTS_DIR}",
-                    reportFiles: "*.html",
-                    reportName: "OWASP ZAP Security Reports",
-                    reportTitles: "Security Vulnerability Reports"
-                ])
-                
-                echo "🎯 PIPELINE OWASP ZAP COMPLETADO"
-                echo "📊 Reportes disponibles en Jenkins artifacts"
-                echo "🌐 Reportes HTML accesibles desde Jenkins UI"
-                echo "🕷️ Análisis dinámico de seguridad web completo"
-            }
+            echo "🧹 Limpiando recursos..."
+            
+            bat '''
+                docker-compose -f %COMPOSE_FILE% down --remove-orphans || echo "Cleanup completed"
+            '''
+            
+            echo "📁 Archivando reportes de seguridad OWASP ZAP..."
+            archiveArtifacts artifacts: "${env.REPORTS_DIR}/**/*", allowEmptyArchive: true
+            
+            echo "🎯 PIPELINE OWASP ZAP COMPLETADO"
         }
         
         success {
             echo "✅ Pipeline OWASP ZAP ejecutado exitosamente"
-            echo "🔍 Revisa los reportes HTML para ver vulnerabilidades detalladas"
-            echo "📋 Archivo SECURITY-SUMMARY.txt contiene instrucciones completas"
+            echo "🔍 Revisa SECURITY-SUMMARY.txt y los reportes HTML"
         }
         
         failure {
             echo "❌ Pipeline falló - revisar logs para detalles"
-            echo "💡 Tip: Las aplicaciones deben estar disponibles para el escaneo"
         }
     }
 }
