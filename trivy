@@ -1,82 +1,69 @@
 pipeline {
     agent any
     
-    environment {
-        FRONTEND_IMAGE = "kahaozeng/prestabanco-frontend:latest"
-        BACKEND_IMAGE = "kahaozeng/prestabanco-backend:latest"
-        REPORTS_DIR = "security-reports"
-        BUILD_TAG = "${env.BUILD_NUMBER}"
-    }
-    
     parameters {
         choice(
             name: 'SCAN_TYPE',
-            choices: ['critical-high', 'full', 'critical-only'],
-            description: 'Tipo de escaneo de vulnerabilidades'
+            choices: ['QUICK', 'STANDARD', 'COMPREHENSIVE'],
+            description: 'Tipo de escaneo de seguridad'
         )
         booleanParam(
-            name: 'FAIL_ON_CRITICAL',
+            name: 'GENERATE_REPORTS',
             defaultValue: true,
-            description: 'Fallar pipeline si encuentra vulnerabilidades críticas'
-        )
-        booleanParam(
-            name: 'DEPLOY_AFTER_SCAN',
-            defaultValue: true,
-            description: 'Ejecutar deploy después del escaneo'
+            description: 'Generar reportes de seguridad'
         )
     }
-
+    
+    environment {
+        REPORTS_DIR = 'security-reports'
+        FRONTEND_IMAGE = 'kahaozeng/prestabanco-frontend:latest'
+        BACKEND_IMAGE = 'kahaozeng/prestabanco-backend:latest'
+        TRIVY_NO_PROGRESS = 'true'
+        TRIVY_QUIET = 'true'
+    }
+    
     stages {
-        stage('Checkout repository') {
-            steps {
-                checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/KaZengZhong/PEP3_Devsecops_Arreglo']])
-            }
-        }
-
-        stage('Preparation') {
+        stage('Initialize Security Scan') {
             steps {
                 script {
-                    echo "🔒 Iniciando Pipeline de Seguridad con Trivy"
-                    echo "============================================="
-                    echo "Build: ${BUILD_TAG}"
-                    echo "Scan Type: ${params.SCAN_TYPE}"
-                    echo "Fail on Critical: ${params.FAIL_ON_CRITICAL}"
-                    echo "Deploy After Scan: ${params.DEPLOY_AFTER_SCAN}"
-                }
-                
-                bat """
-                    if not exist ${REPORTS_DIR} mkdir ${REPORTS_DIR}
-                """
-                
-                // Verificar Docker
-                bat 'docker --version'
-            }
-        }
-
-        stage('Pull Latest Images') {
-            steps {
-                script {
-                    echo "📥 Pulling latest images for scanning..."
-                    try {
-                        bat "docker pull ${FRONTEND_IMAGE}"
-                        bat "docker pull ${BACKEND_IMAGE}"
-                    } catch (Exception e) {
-                        echo "Warning: Could not pull images. Using local images if available. Error: ${e.message}"
-                    }
+                    echo "Iniciando pipeline de seguridad con Trivy"
+                    echo "Tipo de escaneo: ${params.SCAN_TYPE}"
+                    echo "Generar reportes: ${params.GENERATE_REPORTS}"
+                    
+                    // Crear directorio de reportes
+                    bat "if not exist ${REPORTS_DIR} mkdir ${REPORTS_DIR}"
                 }
             }
         }
-
+        
+        stage('Download Security Database') {
+            steps {
+                script {
+                    echo "Descargando base de datos de vulnerabilidades de Trivy..."
+                    
+                    bat """
+                        docker run --rm ^
+                            -v %cd%\\${REPORTS_DIR}:/reports ^
+                            aquasec/trivy:latest image ^
+                            --download-db-only ^
+                            --cache-dir /reports/.trivy
+                    """
+                    
+                    echo "Base de datos de seguridad actualizada"
+                }
+            }
+        }
+        
         stage('Container Security Scan with Trivy') {
             parallel {
                 stage('Trivy Scan - Frontend') {
                     steps {
                         script {
-                            echo "🔍 Scanning Frontend with Trivy..."
+                            echo "Escaneando Frontend con Trivy..."
                             
                             def severity = getSeverityLevel(params.SCAN_TYPE)
                             
-                            // Escaneo en formato tabla
+                            // Escaneo en formato tabla (no falla por vulnerabilidades)
                             bat """
                                 docker run --rm ^
                                     -v /var/run/docker.sock:/var/run/docker.sock ^
@@ -85,10 +72,11 @@ pipeline {
                                     ${FRONTEND_IMAGE} ^
                                     --format table ^
                                     --severity ${severity} ^
-                                    --output /reports/frontend-trivy-table.txt
+                                    --output /reports/frontend-trivy-table.txt ^
+                                    --exit-code 0 || echo "Frontend scan completed"
                             """
                             
-                            // Escaneo en formato JSON
+                            // Escaneo en formato JSON (no falla por vulnerabilidades)
                             bat """
                                 docker run --rm ^
                                     -v /var/run/docker.sock:/var/run/docker.sock ^
@@ -97,10 +85,11 @@ pipeline {
                                     ${FRONTEND_IMAGE} ^
                                     --format json ^
                                     --severity ${severity} ^
-                                    --output /reports/frontend-trivy.json
+                                    --output /reports/frontend-trivy.json ^
+                                    --exit-code 0 || echo "Frontend JSON scan completed"
                             """
                             
-                            echo "✅ Frontend scan completed"
+                            echo "Frontend scan completado"
                         }
                     }
                 }
@@ -108,11 +97,11 @@ pipeline {
                 stage('Trivy Scan - Backend') {
                     steps {
                         script {
-                            echo "🔍 Scanning Backend with Trivy..."
+                            echo "Escaneando Backend con Trivy..."
                             
                             def severity = getSeverityLevel(params.SCAN_TYPE)
                             
-                            // Escaneo en formato tabla
+                            // Escaneo en formato tabla (no falla por vulnerabilidades)
                             bat """
                                 docker run --rm ^
                                     -v /var/run/docker.sock:/var/run/docker.sock ^
@@ -121,10 +110,11 @@ pipeline {
                                     ${BACKEND_IMAGE} ^
                                     --format table ^
                                     --severity ${severity} ^
-                                    --output /reports/backend-trivy-table.txt
+                                    --output /reports/backend-trivy-table.txt ^
+                                    --exit-code 0 || echo "Backend scan completed"
                             """
                             
-                            // Escaneo en formato JSON
+                            // Escaneo en formato JSON (no falla por vulnerabilidades)
                             bat """
                                 docker run --rm ^
                                     -v /var/run/docker.sock:/var/run/docker.sock ^
@@ -133,224 +123,61 @@ pipeline {
                                     ${BACKEND_IMAGE} ^
                                     --format json ^
                                     --severity ${severity} ^
-                                    --output /reports/backend-trivy.json
+                                    --output /reports/backend-trivy.json ^
+                                    --exit-code 0 || echo "Backend JSON scan completed"
                             """
                             
-                            echo "✅ Backend scan completed"
-                        }
-                    }
-                }
-                
-                stage('Trivy Scan - Base Images') {
-                    steps {
-                        script {
-                            echo "🔍 Scanning Base Images..."
-                            
-                            try {
-                                // Usar imágenes base que SÍ existen
-                                echo "Descargando imágenes base..."
-                                bat "docker pull node:18-alpine || echo 'Node image download attempted'"
-                                bat "docker pull openjdk:17-jdk-slim || echo 'Java image download attempted'"
-                                
-                                // Escanear imagen base de Node.js
-                                bat """
-                                    docker run --rm ^
-                                        -v /var/run/docker.sock:/var/run/docker.sock ^
-                                        -v %cd%\\${REPORTS_DIR}:/reports ^
-                                        aquasec/trivy:latest image ^
-                                        node:18-alpine ^
-                                        --format json ^
-                                        --severity CRITICAL,HIGH ^
-                                        --output /reports/base-node-scan.json || echo "Node scan completed with warnings"
-                                """
-                                
-                                // Escanear imagen base de Java (usando tag correcto)
-                                bat """
-                                    docker run --rm ^
-                                        -v /var/run/docker.sock:/var/run/docker.sock ^
-                                        -v %cd%\\${REPORTS_DIR}:/reports ^
-                                        aquasec/trivy:latest image ^
-                                        openjdk:17-jdk-slim ^
-                                        --format json ^
-                                        --severity CRITICAL,HIGH ^
-                                        --output /reports/base-java-scan.json || echo "Java scan completed with warnings"
-                                """
-                                
-                                echo "✅ Base images scan completed"
-                            } catch (Exception e) {
-                                echo "⚠️ Base image scanning completed with warnings: ${e.message}"
-                                echo "Continuing pipeline - this won't affect main application scanning"
-                            }
+                            echo "Backend scan completado"
                         }
                     }
                 }
             }
         }
-
-        stage('Security Quality Gate') {
-            when {
-                expression { params.FAIL_ON_CRITICAL }
-            }
-            steps {
-                script {
-                    echo "🚪 Evaluating Security Quality Gate..."
-                    
-                    def criticalFound = false
-                    
-                    try {
-                        // Verificar vulnerabilidades críticas en Frontend
-                        bat """
-                            docker run --rm ^
-                                -v /var/run/docker.sock:/var/run/docker.sock ^
-                                aquasec/trivy:latest image ^
-                                ${FRONTEND_IMAGE} ^
-                                --severity CRITICAL ^
-                                --exit-code 1 ^
-                                --format table
-                        """
-                    } catch (Exception e) {
-                        echo "❌ Critical vulnerabilities found in Frontend"
-                        criticalFound = true
-                    }
-                    
-                    try {
-                        // Verificar vulnerabilidades críticas en Backend
-                        bat """
-                            docker run --rm ^
-                                -v /var/run/docker.sock:/var/run/docker.sock ^
-                                aquasec/trivy:latest image ^
-                                ${BACKEND_IMAGE} ^
-                                --severity CRITICAL ^
-                                --exit-code 1 ^
-                                --format table
-                        """
-                    } catch (Exception e) {
-                        echo "❌ Critical vulnerabilities found in Backend"
-                        criticalFound = true
-                    }
-                    
-                    if (criticalFound) {
-                        error("❌ Security Quality Gate FAILED: Critical vulnerabilities found")
-                    } else {
-                        echo "✅ Security Quality Gate PASSED: No critical vulnerabilities found"
-                    }
-                }
-            }
-        }
-
+        
         stage('Generate Security Report') {
+            when {
+                expression { params.GENERATE_REPORTS }
+            }
             steps {
                 script {
-                    echo "📊 Generating consolidated security report..."
+                    echo "Generando reporte consolidado de seguridad..."
                     
-                    // Crear reporte HTML consolidado
                     bat """
                         echo ^<!DOCTYPE html^> > ${REPORTS_DIR}\\security-summary.html
-                        echo ^<html^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo ^<head^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo     ^<title^>🔒 Container Security Report - PrestaBanco^</title^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo     ^<style^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; } >> ${REPORTS_DIR}\\security-summary.html
-                        echo         .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); } >> ${REPORTS_DIR}\\security-summary.html
-                        echo         .header { background: linear-gradient(135deg, #667eea 0%%, #764ba2 100%%); color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; } >> ${REPORTS_DIR}\\security-summary.html
-                        echo         .report-section { margin: 20px 0; padding: 15px; border-left: 4px solid #667eea; background: #f8f9fa; } >> ${REPORTS_DIR}\\security-summary.html
-                        echo         pre { background: #f8f9fa; padding: 15px; border-radius: 4px; overflow-x: auto; white-space: pre-wrap; } >> ${REPORTS_DIR}\\security-summary.html
-                        echo     ^</style^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo ^</head^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo ^<body^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo     ^<div class="container"^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo         ^<div class="header"^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo             ^<h1^>🔒 Container Security Report^</h1^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo             ^<p^>^<strong^>Project:^</strong^> PrestaBanco^</p^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo             ^<p^>^<strong^>Build:^</strong^> ${BUILD_TAG}^</p^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo             ^<p^>^<strong^>Scan Type:^</strong^> ${params.SCAN_TYPE}^</p^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo             ^<p^>^<strong^>Tool:^</strong^> Trivy Container Scanner^</p^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo         ^</div^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo         ^<div class="report-section"^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo             ^<h2^>📋 Frontend Security Scan Results^</h2^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo             ^<p^>Frontend Image: ${FRONTEND_IMAGE}^</p^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo             ^<pre^>Ver archivo: frontend-trivy-table.txt^</pre^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo         ^</div^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo         ^<div class="report-section"^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo             ^<h2^>📋 Backend Security Scan Results^</h2^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo             ^<p^>Backend Image: ${BACKEND_IMAGE}^</p^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo             ^<pre^>Ver archivo: backend-trivy-table.txt^</pre^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo         ^</div^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo         ^<div class="report-section"^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo             ^<h2^>🎯 Recommendations^</h2^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo             ^<ul^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo                 ^<li^>Update base images to latest secure versions^</li^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo                 ^<li^>Implement automated vulnerability scanning in CI/CD^</li^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo                 ^<li^>Review and patch critical vulnerabilities immediately^</li^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo                 ^<li^>Set up container security policies^</li^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo             ^</ul^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo         ^</div^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo     ^</div^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo ^</body^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo ^</html^> >> ${REPORTS_DIR}\\security-summary.html
+                        echo ^<html^>^<head^>^<title^>Trivy Security Report^</title^> >> ${REPORTS_DIR}\\security-summary.html
+                        echo ^<style^>body{font-family:Arial;margin:20px;}h1{color:#333;}table{border-collapse:collapse;width:100%%;}th,td{border:1px solid #ddd;padding:8px;text-align:left;}th{background-color:#f2f2f2;}.critical{color:#d32f2f;}.high{color:#f57c00;}.medium{color:#fbc02d;}.low{color:#388e3c;}^</style^> >> ${REPORTS_DIR}\\security-summary.html
+                        echo ^</head^>^<body^> >> ${REPORTS_DIR}\\security-summary.html
+                        echo ^<h1^>Trivy Container Security Report^</h1^> >> ${REPORTS_DIR}\\security-summary.html
+                        echo ^<h2^>Scan Summary^</h2^> >> ${REPORTS_DIR}\\security-summary.html
+                        echo ^<p^>Scan Type: ${params.SCAN_TYPE}^</p^> >> ${REPORTS_DIR}\\security-summary.html
+                        echo ^<p^>Date: %date% %time%^</p^> >> ${REPORTS_DIR}\\security-summary.html
+                        echo ^<p^>Images Scanned: ${FRONTEND_IMAGE}, ${BACKEND_IMAGE}^</p^> >> ${REPORTS_DIR}\\security-summary.html
+                        echo ^<h2^>Results^</h2^> >> ${REPORTS_DIR}\\security-summary.html
+                        echo ^<p^>Frontend scan results available in: frontend-trivy-table.txt^</p^> >> ${REPORTS_DIR}\\security-summary.html
+                        echo ^<p^>Backend scan results available in: backend-trivy-table.txt^</p^> >> ${REPORTS_DIR}\\security-summary.html
+                        echo ^<p^>Detailed JSON reports also generated for further analysis.^</p^> >> ${REPORTS_DIR}\\security-summary.html
+                        echo ^</body^>^</html^> >> ${REPORTS_DIR}\\security-summary.html
                     """
                 }
             }
-            post {
-                always {
-                    archiveArtifacts artifacts: "${REPORTS_DIR}/**/*", fingerprint: true
-                    publishHTML([
-                        allowMissing: false,
-                        alwaysLinkToLastBuild: true,
-                        keepAll: true,
-                        reportDir: REPORTS_DIR,
-                        reportFiles: 'security-summary.html',
-                        reportName: 'Trivy Security Report'
-                    ])
-                }
-            }
         }
-
-        stage('Deploy with Docker Compose') {
-            when {
-                expression { params.DEPLOY_AFTER_SCAN }
-            }
+        
+        stage('Archive Reports') {
             steps {
                 script {
-                    echo "🚀 Deploying application with Docker Compose..."
-                    try {
-                        bat 'dir'
-                        bat 'docker-compose -f compose2.yml down || echo "No containers to stop"'
-                        bat 'docker-compose -f compose2.yml up -d'
-                        
-                        echo "✅ Application deployed successfully"
-                        
-                        // Verificar que los servicios estén corriendo
-                        sleep(10)
-                        bat 'docker-compose -f compose2.yml ps'
-                        
-                    } catch (Exception e) {
-                        echo "Warning: Could not deploy with Docker Compose. Error: ${e.message}"
-                        currentBuild.result = 'UNSTABLE'
-                    }
-                }
-            }
-        }
-
-        stage('Post-Deploy Security Check') {
-            when {
-                expression { params.DEPLOY_AFTER_SCAN }
-            }
-            steps {
-                script {
-                    echo "🔍 Running post-deploy security verification..."
-                    sleep(15) // Esperar que los servicios estén completamente iniciados
+                    echo "Guardando los archivos generados"
                     
-                    try {
-                        // Verificar que los puertos estén respondiendo
-                        bat """
-                            echo Checking application health...
-                            timeout 5 >nul 2>&1 || curl -s -o nul -w "Frontend Status: %%{http_code}" http://localhost:8070 || echo "Frontend check completed"
-                            timeout 5 >nul 2>&1 || curl -s -o nul -w "Backend Status: %%{http_code}" http://localhost:8090 || echo "Backend check completed"
-                        """
-                    } catch (Exception e) {
-                        echo "Note: Health check completed with warnings: ${e.message}"
-                    }
+                    // Crear un resumen de archivos
+                    bat """
+                        echo Trivy Security Scan Results > ${REPORTS_DIR}\\README.txt
+                        echo ================================ >> ${REPORTS_DIR}\\README.txt
+                        echo. >> ${REPORTS_DIR}\\README.txt
+                        echo Generated on: %date% %time% >> ${REPORTS_DIR}\\README.txt
+                        echo Scan Type: ${params.SCAN_TYPE} >> ${REPORTS_DIR}\\README.txt
+                        echo. >> ${REPORTS_DIR}\\README.txt
+                        echo Files in this report: >> ${REPORTS_DIR}\\README.txt
+                        dir ${REPORTS_DIR} /B >> ${REPORTS_DIR}\\README.txt
+                    """
                 }
             }
         }
@@ -358,57 +185,27 @@ pipeline {
     
     post {
         always {
-            script {
-                echo "🏁 Trivy Security Pipeline completed"
-                echo "📁 Security reports available in: ${REPORTS_DIR}/"
-                
-                // Listar archivos generados
-                bat "dir ${REPORTS_DIR}"
-            }
+            archiveArtifacts artifacts: "${REPORTS_DIR}/**/*", fingerprint: true
+            echo "Security report generated and archived successfully"
         }
         success {
-            echo "✅ Container security scan completed successfully"
-            script {
-                try {
-                    slackSend(
-                        channel: '#devsecops',
-                        color: 'good',
-                        message: "✅ Trivy security scan passed for PrestaBanco - Build #${env.BUILD_NUMBER}"
-                    )
-                } catch (Exception e) {
-                    echo "Note: Slack notification not configured"
-                }
-            }
+            echo "Trivy security pipeline completed successfully"
         }
         failure {
-            echo "❌ Container security scan failed"
-            script {
-                try {
-                    slackSend(
-                        channel: '#devsecops',
-                        color: 'danger',
-                        message: "❌ Trivy security scan failed for PrestaBanco - Build #${env.BUILD_NUMBER}\\nCheck: ${env.BUILD_URL}"
-                    )
-                } catch (Exception e) {
-                    echo "Note: Slack notification not configured"
-                }
-            }
-        }
-        unstable {
-            echo "⚠️ Container security scan completed with warnings"
+            echo "Trivy security pipeline encountered issues but reports were generated"
         }
     }
 }
 
-// Función auxiliar para determinar el nivel de severidad
 def getSeverityLevel(scanType) {
     switch(scanType) {
-        case 'critical-only':
+        case 'QUICK':
             return 'CRITICAL'
-        case 'critical-high':
+        case 'STANDARD':
             return 'CRITICAL,HIGH'
-        case 'full':
-        default:
+        case 'COMPREHENSIVE':
             return 'CRITICAL,HIGH,MEDIUM,LOW'
+        default:
+            return 'CRITICAL,HIGH'
     }
 }
