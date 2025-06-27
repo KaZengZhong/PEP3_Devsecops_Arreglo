@@ -82,7 +82,7 @@ pipeline {
                             bat """
                                 powershell -Command "& {
                                     Get-Content '${REPORTS_DIR}\\frontend-scan.txt' -Raw | 
-                                    ForEach-Object { $_ -replace '[^\\x20-\\x7E\\r\\n]', '' } | 
+                                    ForEach-Object { \\$_ -replace '[^\\\\x20-\\\\x7E\\\\r\\\\n]', '' } | 
                                     Out-File '${REPORTS_DIR}\\frontend-clean.txt' -Encoding ASCII
                                 }"
                             """
@@ -131,7 +131,7 @@ pipeline {
                             bat """
                                 powershell -Command "& {
                                     Get-Content '${REPORTS_DIR}\\backend-scan.txt' -Raw | 
-                                    ForEach-Object { $_ -replace '[^\\x20-\\x7E\\r\\n]', '' } | 
+                                    ForEach-Object { \\$_ -replace '[^\\\\x20-\\\\x7E\\\\r\\\\n]', '' } | 
                                     Out-File '${REPORTS_DIR}\\backend-clean.txt' -Encoding ASCII
                                 }"
                             """
@@ -165,7 +165,7 @@ pipeline {
                                     Write-Output 'TRIVY SECURITY SCAN RESULTS'
                                     Write-Output '=================================='
                                     Write-Output ''
-                                    Write-Output 'Scan Date: $(Get-Date)'
+                                    Write-Output 'Scan Date: \\$(Get-Date)'
                                     Write-Output 'Images Scanned:'
                                     Write-Output '  - Frontend: ${FRONTEND_IMAGE}'
                                     Write-Output '  - Backend: ${BACKEND_IMAGE}'
