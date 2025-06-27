@@ -63,22 +63,25 @@ pipeline {
                             
                             def severity = getSeverityLevel(params.SCAN_TYPE)
                             
-                            // Escaneo en formato tabla (no falla por vulnerabilidades)
-                            bat """
-                                docker run --rm ^
-                                    -v /var/run/docker.sock:/var/run/docker.sock ^
-                                    -v %cd%\\${REPORTS_DIR}:/reports ^
-                                    aquasec/trivy:latest image ^
-                                    ${FRONTEND_IMAGE} ^
-                                    --format table ^
-                                    --severity ${severity} ^
-                                    --no-progress ^
-                                    --quiet ^
-                                    --output /reports/frontend-trivy-table.txt ^
-                                    --exit-code 0 || echo "Frontend scan completed"
-                            """
+                            // Escaneo directo sin archivo (mejor para Windows)
+                            def frontendScanResult = bat(
+                                script: """
+                                    docker run --rm ^
+                                        -v /var/run/docker.sock:/var/run/docker.sock ^
+                                        aquasec/trivy:latest image ^
+                                        ${FRONTEND_IMAGE} ^
+                                        --format table ^
+                                        --severity ${severity} ^
+                                        --no-progress ^
+                                        --exit-code 0
+                                """,
+                                returnStdout: true
+                            )
                             
-                            // Escaneo en formato JSON (no falla por vulnerabilidades)
+                            // Guardar resultado en archivo con encoding correcto
+                            writeFile file: "${REPORTS_DIR}/frontend-scan-results.txt", text: frontendScanResult, encoding: "UTF-8"
+                            
+                            // Escaneo en formato JSON
                             bat """
                                 docker run --rm ^
                                     -v /var/run/docker.sock:/var/run/docker.sock ^
@@ -103,22 +106,25 @@ pipeline {
                             
                             def severity = getSeverityLevel(params.SCAN_TYPE)
                             
-                            // Escaneo en formato tabla (no falla por vulnerabilidades)
-                            bat """
-                                docker run --rm ^
-                                    -v /var/run/docker.sock:/var/run/docker.sock ^
-                                    -v %cd%\\${REPORTS_DIR}:/reports ^
-                                    aquasec/trivy:latest image ^
-                                    ${BACKEND_IMAGE} ^
-                                    --format table ^
-                                    --severity ${severity} ^
-                                    --no-progress ^
-                                    --quiet ^
-                                    --output /reports/backend-trivy-table.txt ^
-                                    --exit-code 0 || echo "Backend scan completed"
-                            """
+                            // Escaneo directo sin archivo (mejor para Windows)
+                            def backendScanResult = bat(
+                                script: """
+                                    docker run --rm ^
+                                        -v /var/run/docker.sock:/var/run/docker.sock ^
+                                        aquasec/trivy:latest image ^
+                                        ${BACKEND_IMAGE} ^
+                                        --format table ^
+                                        --severity ${severity} ^
+                                        --no-progress ^
+                                        --exit-code 0
+                                """,
+                                returnStdout: true
+                            )
                             
-                            // Escaneo en formato JSON (no falla por vulnerabilidades)
+                            // Guardar resultado en archivo con encoding correcto
+                            writeFile file: "${REPORTS_DIR}/backend-scan-results.txt", text: backendScanResult, encoding: "UTF-8"
+                            
+                            // Escaneo en formato JSON
                             bat """
                                 docker run --rm ^
                                     -v /var/run/docker.sock:/var/run/docker.sock ^
