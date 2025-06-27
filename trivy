@@ -4,13 +4,8 @@ pipeline {
     parameters {
         choice(
             name: 'SCAN_TYPE',
-            choices: ['QUICK', 'STANDARD', 'COMPREHENSIVE'],
+            choices: ['STANDARD', 'QUICK', 'COMPREHENSIVE'],
             description: 'Tipo de escaneo de seguridad'
-        )
-        booleanParam(
-            name: 'GENERATE_REPORTS',
-            defaultValue: true,
-            description: 'Generar reportes de seguridad'
         )
     }
     
@@ -18,76 +13,29 @@ pipeline {
         REPORTS_DIR = 'security-reports'
         FRONTEND_IMAGE = 'kahaozeng/prestabanco-frontend:latest'
         BACKEND_IMAGE = 'kahaozeng/prestabanco-backend:latest'
-        TRIVY_NO_PROGRESS = 'true'
-        TRIVY_QUIET = 'true'
     }
     
     stages {
-        stage('Initialize Security Scan') {
+        stage('Initialize') {
             steps {
                 script {
                     echo "Iniciando pipeline de seguridad con Trivy"
                     echo "Tipo de escaneo: ${params.SCAN_TYPE}"
-                    echo "Generar reportes: ${params.GENERATE_REPORTS}"
                     
-                    // Crear directorio de reportes
                     bat "if not exist ${REPORTS_DIR} mkdir ${REPORTS_DIR}"
                 }
             }
         }
         
-        stage('Download Security Database') {
-            steps {
-                script {
-                    echo "Descargando base de datos de vulnerabilidades de Trivy..."
-                    
-                    bat """
-                        docker run --rm ^
-                            -v %cd%\\${REPORTS_DIR}:/reports ^
-                            aquasec/trivy:latest image ^
-                            --download-db-only ^
-                            --cache-dir /reports/.trivy
-                    """
-                    
-                    echo "Base de datos de seguridad actualizada"
-                }
-            }
-        }
-        
-        stage('Container Security Scan with Trivy') {
+        stage('Trivy Security Scan') {
             parallel {
-                stage('Trivy Scan - Frontend') {
+                stage('Frontend Scan') {
                     steps {
                         script {
-                            echo "Escaneando Frontend con Trivy..."
+                            echo "Escaneando Frontend..."
                             
                             def severity = getSeverityLevel(params.SCAN_TYPE)
                             
-                            // Configurar encoding y ejecutar scan
-                            bat """
-                                chcp 65001
-                                docker run --rm ^
-                                    -v /var/run/docker.sock:/var/run/docker.sock ^
-                                    -e "TERM=xterm" ^
-                                    aquasec/trivy:latest image ^
-                                    ${FRONTEND_IMAGE} ^
-                                    --format table ^
-                                    --severity ${severity} ^
-                                    --no-progress ^
-                                    --light ^
-                                    --exit-code 0 > ${REPORTS_DIR}\\frontend-scan.txt 2>&1 || echo "Frontend scan completed"
-                            """
-                            
-                            // Limpiar caracteres problemáticos
-                            bat """
-                                powershell -Command "& {
-                                    Get-Content '${REPORTS_DIR}\\frontend-scan.txt' -Raw | 
-                                    ForEach-Object { \\$_ -replace '[^\\\\x20-\\\\x7E\\\\r\\\\n]', '' } | 
-                                    Out-File '${REPORTS_DIR}\\frontend-clean.txt' -Encoding ASCII
-                                }"
-                            """
-                            
-                            // JSON scan
                             bat """
                                 docker run --rm ^
                                     -v /var/run/docker.sock:/var/run/docker.sock ^
@@ -97,7 +45,7 @@ pipeline {
                                     --format json ^
                                     --severity ${severity} ^
                                     --output /reports/frontend-trivy.json ^
-                                    --exit-code 0 || echo "Frontend JSON completed"
+                                    --exit-code 0
                             """
                             
                             echo "Frontend scan completado"
@@ -105,38 +53,13 @@ pipeline {
                     }
                 }
                 
-                stage('Trivy Scan - Backend') {
+                stage('Backend Scan') {
                     steps {
                         script {
-                            echo "Escaneando Backend con Trivy..."
+                            echo "Escaneando Backend..."
                             
                             def severity = getSeverityLevel(params.SCAN_TYPE)
                             
-                            // Configurar encoding y ejecutar scan  
-                            bat """
-                                chcp 65001
-                                docker run --rm ^
-                                    -v /var/run/docker.sock:/var/run/docker.sock ^
-                                    -e "TERM=xterm" ^
-                                    aquasec/trivy:latest image ^
-                                    ${BACKEND_IMAGE} ^
-                                    --format table ^
-                                    --severity ${severity} ^
-                                    --no-progress ^
-                                    --light ^
-                                    --exit-code 0 > ${REPORTS_DIR}\\backend-scan.txt 2>&1 || echo "Backend scan completed"
-                            """
-                            
-                            // Limpiar caracteres problemáticos
-                            bat """
-                                powershell -Command "& {
-                                    Get-Content '${REPORTS_DIR}\\backend-scan.txt' -Raw | 
-                                    ForEach-Object { \\$_ -replace '[^\\\\x20-\\\\x7E\\\\r\\\\n]', '' } | 
-                                    Out-File '${REPORTS_DIR}\\backend-clean.txt' -Encoding ASCII
-                                }"
-                            """
-                            
-                            // JSON scan
                             bat """
                                 docker run --rm ^
                                     -v /var/run/docker.sock:/var/run/docker.sock ^
@@ -146,100 +69,50 @@ pipeline {
                                     --format json ^
                                     --severity ${severity} ^
                                     --output /reports/backend-trivy.json ^
-                                    --exit-code 0 || echo "Backend JSON completed"
+                                    --exit-code 0
                             """
                             
                             echo "Backend scan completado"
                         }
                     }
                 }
-                
-                stage('Generate Summary Report') {
-                    steps {
-                        script {
-                            echo "Generando reporte resumen..."
-                            
-                            // Crear reporte de resumen parseando los archivos JSON
-                            bat """
-                                powershell -Command "& {
-                                    Write-Output 'TRIVY SECURITY SCAN RESULTS'
-                                    Write-Output '=================================='
-                                    Write-Output ''
-                                    Write-Output 'Scan Date: \\$(Get-Date)'
-                                    Write-Output 'Images Scanned:'
-                                    Write-Output '  - Frontend: ${FRONTEND_IMAGE}'
-                                    Write-Output '  - Backend: ${BACKEND_IMAGE}'
-                                    Write-Output ''
-                                    Write-Output 'Severity Filter: ${params.SCAN_TYPE}'
-                                    Write-Output ''
-                                    Write-Output 'FRONTEND RESULTS:'
-                                    Write-Output '================='
-                                    if (Test-Path '${REPORTS_DIR}\\frontend-clean.txt') {
-                                        Get-Content '${REPORTS_DIR}\\frontend-clean.txt' | Select-Object -First 50
-                                    } else {
-                                        Write-Output 'Frontend scan results not available'
-                                    }
-                                    Write-Output ''
-                                    Write-Output 'BACKEND RESULTS:'
-                                    Write-Output '==============='
-                                    if (Test-Path '${REPORTS_DIR}\\backend-clean.txt') {
-                                        Get-Content '${REPORTS_DIR}\\backend-clean.txt' | Select-Object -First 50
-                                    } else {
-                                        Write-Output 'Backend scan results not available'
-                                    }
-                                    Write-Output ''
-                                    Write-Output 'NOTE: Complete results available in JSON files'
-                                } | Out-File '${REPORTS_DIR}\\security-summary.txt' -Encoding UTF8"
-                            """
-                        }
-                    }
-                }
             }
         }
         
-        stage('Generate Security Report') {
-            when {
-                expression { params.GENERATE_REPORTS }
-            }
+        stage('Generate Summary') {
             steps {
                 script {
-                    echo "Generando reporte consolidado de seguridad..."
+                    echo "Generando resumen de seguridad..."
                     
                     bat """
-                        echo ^<!DOCTYPE html^> > ${REPORTS_DIR}\\security-summary.html
-                        echo ^<html^>^<head^>^<title^>Trivy Security Report^</title^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo ^<style^>body{font-family:Arial;margin:20px;}h1{color:#333;}table{border-collapse:collapse;width:100%%;}th,td{border:1px solid #ddd;padding:8px;text-align:left;}th{background-color:#f2f2f2;}.critical{color:#d32f2f;}.high{color:#f57c00;}.medium{color:#fbc02d;}.low{color:#388e3c;}^</style^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo ^</head^>^<body^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo ^<h1^>Trivy Container Security Report^</h1^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo ^<h2^>Scan Summary^</h2^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo ^<p^>Scan Type: ${params.SCAN_TYPE}^</p^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo ^<p^>Date: %date% %time%^</p^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo ^<p^>Images Scanned: ${FRONTEND_IMAGE}, ${BACKEND_IMAGE}^</p^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo ^<h2^>Results^</h2^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo ^<p^>Frontend scan results available in: frontend-trivy-table.txt^</p^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo ^<p^>Backend scan results available in: backend-trivy-table.txt^</p^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo ^<p^>Detailed JSON reports also generated for further analysis.^</p^> >> ${REPORTS_DIR}\\security-summary.html
-                        echo ^</body^>^</html^> >> ${REPORTS_DIR}\\security-summary.html
+                        echo TRIVY SECURITY SCAN RESULTS > ${REPORTS_DIR}\\summary.txt
+                        echo ================================ >> ${REPORTS_DIR}\\summary.txt
+                        echo. >> ${REPORTS_DIR}\\summary.txt
+                        echo Scan Date: %date% %time% >> ${REPORTS_DIR}\\summary.txt
+                        echo Images Scanned: >> ${REPORTS_DIR}\\summary.txt
+                        echo   Frontend: ${FRONTEND_IMAGE} >> ${REPORTS_DIR}\\summary.txt
+                        echo   Backend: ${BACKEND_IMAGE} >> ${REPORTS_DIR}\\summary.txt
+                        echo. >> ${REPORTS_DIR}\\summary.txt
+                        echo Severity Filter: ${params.SCAN_TYPE} >> ${REPORTS_DIR}\\summary.txt
+                        echo. >> ${REPORTS_DIR}\\summary.txt
+                        echo Results available in JSON files: >> ${REPORTS_DIR}\\summary.txt
+                        echo   - frontend-trivy.json >> ${REPORTS_DIR}\\summary.txt
+                        echo   - backend-trivy.json >> ${REPORTS_DIR}\\summary.txt
+                        echo. >> ${REPORTS_DIR}\\summary.txt
+                        echo Pipeline completed successfully >> ${REPORTS_DIR}\\summary.txt
                     """
                 }
             }
         }
         
-        stage('Archive Reports') {
+        stage('Archive Results') {
             steps {
                 script {
-                    echo "Guardando los archivos generados"
+                    echo "Archivando resultados..."
                     
-                    // Crear un resumen de archivos
                     bat """
-                        echo Trivy Security Scan Results > ${REPORTS_DIR}\\README.txt
-                        echo ================================ >> ${REPORTS_DIR}\\README.txt
-                        echo. >> ${REPORTS_DIR}\\README.txt
-                        echo Generated on: %date% %time% >> ${REPORTS_DIR}\\README.txt
-                        echo Scan Type: ${params.SCAN_TYPE} >> ${REPORTS_DIR}\\README.txt
-                        echo. >> ${REPORTS_DIR}\\README.txt
-                        echo Files in this report: >> ${REPORTS_DIR}\\README.txt
-                        dir ${REPORTS_DIR} /B >> ${REPORTS_DIR}\\README.txt
+                        echo Files generated: > ${REPORTS_DIR}\\files.txt
+                        dir ${REPORTS_DIR} >> ${REPORTS_DIR}\\files.txt
                     """
                 }
             }
@@ -249,13 +122,13 @@ pipeline {
     post {
         always {
             archiveArtifacts artifacts: "${REPORTS_DIR}/**/*", fingerprint: true
-            echo "Security report generated and archived successfully"
+            echo "Pipeline de seguridad completado"
         }
         success {
-            echo "Trivy security pipeline completed successfully"
+            echo "Trivy security scan completed successfully"
         }
         failure {
-            echo "Trivy security pipeline encountered issues but reports were generated"
+            echo "Pipeline encountered issues but reports may still be available"
         }
     }
 }
