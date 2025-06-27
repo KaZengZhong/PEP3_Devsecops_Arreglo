@@ -63,25 +63,7 @@ pipeline {
                             
                             def severity = getSeverityLevel(params.SCAN_TYPE)
                             
-                            // Escaneo directo sin archivo (mejor para Windows)
-                            def frontendScanResult = bat(
-                                script: """
-                                    docker run --rm ^
-                                        -v /var/run/docker.sock:/var/run/docker.sock ^
-                                        aquasec/trivy:latest image ^
-                                        ${FRONTEND_IMAGE} ^
-                                        --format table ^
-                                        --severity ${severity} ^
-                                        --no-progress ^
-                                        --exit-code 0
-                                """,
-                                returnStdout: true
-                            )
-                            
-                            // Guardar resultado en archivo con encoding correcto
-                            writeFile file: "${REPORTS_DIR}/frontend-scan-results.txt", text: frontendScanResult, encoding: "UTF-8"
-                            
-                            // Escaneo en formato JSON
+                            // Solo generar JSON (sin problemas de encoding)
                             bat """
                                 docker run --rm ^
                                     -v /var/run/docker.sock:/var/run/docker.sock ^
@@ -91,7 +73,18 @@ pipeline {
                                     --format json ^
                                     --severity ${severity} ^
                                     --output /reports/frontend-trivy.json ^
-                                    --exit-code 0 || echo "Frontend JSON scan completed"
+                                    --exit-code 0 || echo "Frontend scan completed"
+                            """
+                            
+                            // Generar reporte legible en texto plano
+                            bat """
+                                echo Frontend Security Scan Results > ${REPORTS_DIR}\\frontend-summary.txt
+                                echo ================================ >> ${REPORTS_DIR}\\frontend-summary.txt
+                                echo Image: ${FRONTEND_IMAGE} >> ${REPORTS_DIR}\\frontend-summary.txt
+                                echo Severity Filter: ${severity} >> ${REPORTS_DIR}\\frontend-summary.txt
+                                echo Scan Date: %date% %time% >> ${REPORTS_DIR}\\frontend-summary.txt
+                                echo. >> ${REPORTS_DIR}\\frontend-summary.txt
+                                echo See frontend-trivy.json for detailed vulnerability data >> ${REPORTS_DIR}\\frontend-summary.txt
                             """
                             
                             echo "Frontend scan completado"
@@ -106,25 +99,7 @@ pipeline {
                             
                             def severity = getSeverityLevel(params.SCAN_TYPE)
                             
-                            // Escaneo directo sin archivo (mejor para Windows)
-                            def backendScanResult = bat(
-                                script: """
-                                    docker run --rm ^
-                                        -v /var/run/docker.sock:/var/run/docker.sock ^
-                                        aquasec/trivy:latest image ^
-                                        ${BACKEND_IMAGE} ^
-                                        --format table ^
-                                        --severity ${severity} ^
-                                        --no-progress ^
-                                        --exit-code 0
-                                """,
-                                returnStdout: true
-                            )
-                            
-                            // Guardar resultado en archivo con encoding correcto
-                            writeFile file: "${REPORTS_DIR}/backend-scan-results.txt", text: backendScanResult, encoding: "UTF-8"
-                            
-                            // Escaneo en formato JSON
+                            // Solo generar JSON (sin problemas de encoding)
                             bat """
                                 docker run --rm ^
                                     -v /var/run/docker.sock:/var/run/docker.sock ^
@@ -134,7 +109,18 @@ pipeline {
                                     --format json ^
                                     --severity ${severity} ^
                                     --output /reports/backend-trivy.json ^
-                                    --exit-code 0 || echo "Backend JSON scan completed"
+                                    --exit-code 0 || echo "Backend scan completed"
+                            """
+                            
+                            // Generar reporte legible en texto plano
+                            bat """
+                                echo Backend Security Scan Results > ${REPORTS_DIR}\\backend-summary.txt
+                                echo =============================== >> ${REPORTS_DIR}\\backend-summary.txt
+                                echo Image: ${BACKEND_IMAGE} >> ${REPORTS_DIR}\\backend-summary.txt
+                                echo Severity Filter: ${severity} >> ${REPORTS_DIR}\\backend-summary.txt
+                                echo Scan Date: %date% %time% >> ${REPORTS_DIR}\\backend-summary.txt
+                                echo. >> ${REPORTS_DIR}\\backend-summary.txt
+                                echo See backend-trivy.json for detailed vulnerability data >> ${REPORTS_DIR}\\backend-summary.txt
                             """
                             
                             echo "Backend scan completado"
