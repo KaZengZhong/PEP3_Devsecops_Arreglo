@@ -63,7 +63,31 @@ pipeline {
                             
                             def severity = getSeverityLevel(params.SCAN_TYPE)
                             
-                            // Solo generar JSON (sin problemas de encoding)
+                            // Configurar encoding y ejecutar scan
+                            bat """
+                                chcp 65001
+                                docker run --rm ^
+                                    -v /var/run/docker.sock:/var/run/docker.sock ^
+                                    -e "TERM=xterm" ^
+                                    aquasec/trivy:latest image ^
+                                    ${FRONTEND_IMAGE} ^
+                                    --format table ^
+                                    --severity ${severity} ^
+                                    --no-progress ^
+                                    --light ^
+                                    --exit-code 0 > ${REPORTS_DIR}\\frontend-scan.txt 2>&1 || echo "Frontend scan completed"
+                            """
+                            
+                            // Limpiar caracteres problemáticos
+                            bat """
+                                powershell -Command "& {
+                                    Get-Content '${REPORTS_DIR}\\frontend-scan.txt' -Raw | 
+                                    ForEach-Object { $_ -replace '[^\\x20-\\x7E\\r\\n]', '' } | 
+                                    Out-File '${REPORTS_DIR}\\frontend-clean.txt' -Encoding ASCII
+                                }"
+                            """
+                            
+                            // JSON scan
                             bat """
                                 docker run --rm ^
                                     -v /var/run/docker.sock:/var/run/docker.sock ^
@@ -73,18 +97,7 @@ pipeline {
                                     --format json ^
                                     --severity ${severity} ^
                                     --output /reports/frontend-trivy.json ^
-                                    --exit-code 0 || echo "Frontend scan completed"
-                            """
-                            
-                            // Generar reporte legible en texto plano
-                            bat """
-                                echo Frontend Security Scan Results > ${REPORTS_DIR}\\frontend-summary.txt
-                                echo ================================ >> ${REPORTS_DIR}\\frontend-summary.txt
-                                echo Image: ${FRONTEND_IMAGE} >> ${REPORTS_DIR}\\frontend-summary.txt
-                                echo Severity Filter: ${severity} >> ${REPORTS_DIR}\\frontend-summary.txt
-                                echo Scan Date: %date% %time% >> ${REPORTS_DIR}\\frontend-summary.txt
-                                echo. >> ${REPORTS_DIR}\\frontend-summary.txt
-                                echo See frontend-trivy.json for detailed vulnerability data >> ${REPORTS_DIR}\\frontend-summary.txt
+                                    --exit-code 0 || echo "Frontend JSON completed"
                             """
                             
                             echo "Frontend scan completado"
@@ -99,7 +112,31 @@ pipeline {
                             
                             def severity = getSeverityLevel(params.SCAN_TYPE)
                             
-                            // Solo generar JSON (sin problemas de encoding)
+                            // Configurar encoding y ejecutar scan  
+                            bat """
+                                chcp 65001
+                                docker run --rm ^
+                                    -v /var/run/docker.sock:/var/run/docker.sock ^
+                                    -e "TERM=xterm" ^
+                                    aquasec/trivy:latest image ^
+                                    ${BACKEND_IMAGE} ^
+                                    --format table ^
+                                    --severity ${severity} ^
+                                    --no-progress ^
+                                    --light ^
+                                    --exit-code 0 > ${REPORTS_DIR}\\backend-scan.txt 2>&1 || echo "Backend scan completed"
+                            """
+                            
+                            // Limpiar caracteres problemáticos
+                            bat """
+                                powershell -Command "& {
+                                    Get-Content '${REPORTS_DIR}\\backend-scan.txt' -Raw | 
+                                    ForEach-Object { $_ -replace '[^\\x20-\\x7E\\r\\n]', '' } | 
+                                    Out-File '${REPORTS_DIR}\\backend-clean.txt' -Encoding ASCII
+                                }"
+                            """
+                            
+                            // JSON scan
                             bat """
                                 docker run --rm ^
                                     -v /var/run/docker.sock:/var/run/docker.sock ^
@@ -109,21 +146,51 @@ pipeline {
                                     --format json ^
                                     --severity ${severity} ^
                                     --output /reports/backend-trivy.json ^
-                                    --exit-code 0 || echo "Backend scan completed"
-                            """
-                            
-                            // Generar reporte legible en texto plano
-                            bat """
-                                echo Backend Security Scan Results > ${REPORTS_DIR}\\backend-summary.txt
-                                echo =============================== >> ${REPORTS_DIR}\\backend-summary.txt
-                                echo Image: ${BACKEND_IMAGE} >> ${REPORTS_DIR}\\backend-summary.txt
-                                echo Severity Filter: ${severity} >> ${REPORTS_DIR}\\backend-summary.txt
-                                echo Scan Date: %date% %time% >> ${REPORTS_DIR}\\backend-summary.txt
-                                echo. >> ${REPORTS_DIR}\\backend-summary.txt
-                                echo See backend-trivy.json for detailed vulnerability data >> ${REPORTS_DIR}\\backend-summary.txt
+                                    --exit-code 0 || echo "Backend JSON completed"
                             """
                             
                             echo "Backend scan completado"
+                        }
+                    }
+                }
+                
+                stage('Generate Summary Report') {
+                    steps {
+                        script {
+                            echo "Generando reporte resumen..."
+                            
+                            // Crear reporte de resumen parseando los archivos JSON
+                            bat """
+                                powershell -Command "& {
+                                    Write-Output 'TRIVY SECURITY SCAN RESULTS'
+                                    Write-Output '=================================='
+                                    Write-Output ''
+                                    Write-Output 'Scan Date: $(Get-Date)'
+                                    Write-Output 'Images Scanned:'
+                                    Write-Output '  - Frontend: ${FRONTEND_IMAGE}'
+                                    Write-Output '  - Backend: ${BACKEND_IMAGE}'
+                                    Write-Output ''
+                                    Write-Output 'Severity Filter: ${params.SCAN_TYPE}'
+                                    Write-Output ''
+                                    Write-Output 'FRONTEND RESULTS:'
+                                    Write-Output '================='
+                                    if (Test-Path '${REPORTS_DIR}\\frontend-clean.txt') {
+                                        Get-Content '${REPORTS_DIR}\\frontend-clean.txt' | Select-Object -First 50
+                                    } else {
+                                        Write-Output 'Frontend scan results not available'
+                                    }
+                                    Write-Output ''
+                                    Write-Output 'BACKEND RESULTS:'
+                                    Write-Output '==============='
+                                    if (Test-Path '${REPORTS_DIR}\\backend-clean.txt') {
+                                        Get-Content '${REPORTS_DIR}\\backend-clean.txt' | Select-Object -First 50
+                                    } else {
+                                        Write-Output 'Backend scan results not available'
+                                    }
+                                    Write-Output ''
+                                    Write-Output 'NOTE: Complete results available in JSON files'
+                                } | Out-File '${REPORTS_DIR}\\security-summary.txt' -Encoding UTF8"
+                            """
                         }
                     }
                 }
