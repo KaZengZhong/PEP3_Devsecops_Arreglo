@@ -72,6 +72,8 @@ pipeline {
                                     ${FRONTEND_IMAGE} ^
                                     --format table ^
                                     --severity ${severity} ^
+                                    --no-progress ^
+                                    --quiet ^
                                     --output /reports/frontend-trivy-table.txt ^
                                     --exit-code 0 || echo "Frontend scan completed"
                             """
@@ -110,6 +112,8 @@ pipeline {
                                     ${BACKEND_IMAGE} ^
                                     --format table ^
                                     --severity ${severity} ^
+                                    --no-progress ^
+                                    --quiet ^
                                     --output /reports/backend-trivy-table.txt ^
                                     --exit-code 0 || echo "Backend scan completed"
                             """
