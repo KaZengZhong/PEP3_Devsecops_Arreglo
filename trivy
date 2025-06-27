@@ -36,6 +36,7 @@ pipeline {
                             
                             def severity = getSeverityLevel(params.SCAN_TYPE)
                             
+                            // JSON scan
                             bat """
                                 docker run --rm ^
                                     -v /var/run/docker.sock:/var/run/docker.sock ^
@@ -45,6 +46,20 @@ pipeline {
                                     --format json ^
                                     --severity ${severity} ^
                                     --output /reports/frontend-trivy.json ^
+                                    --exit-code 0
+                            """
+                            
+                            // Table scan (sin redirección problemática)
+                            bat """
+                                docker run --rm ^
+                                    -v /var/run/docker.sock:/var/run/docker.sock ^
+                                    -v %cd%\\${REPORTS_DIR}:/reports ^
+                                    aquasec/trivy:latest image ^
+                                    ${FRONTEND_IMAGE} ^
+                                    --format table ^
+                                    --severity ${severity} ^
+                                    --no-progress ^
+                                    --output /reports/frontend-table.txt ^
                                     --exit-code 0
                             """
                             
@@ -60,6 +75,7 @@ pipeline {
                             
                             def severity = getSeverityLevel(params.SCAN_TYPE)
                             
+                            // JSON scan
                             bat """
                                 docker run --rm ^
                                     -v /var/run/docker.sock:/var/run/docker.sock ^
@@ -69,6 +85,20 @@ pipeline {
                                     --format json ^
                                     --severity ${severity} ^
                                     --output /reports/backend-trivy.json ^
+                                    --exit-code 0
+                            """
+                            
+                            // Table scan (sin redirección problemática)
+                            bat """
+                                docker run --rm ^
+                                    -v /var/run/docker.sock:/var/run/docker.sock ^
+                                    -v %cd%\\${REPORTS_DIR}:/reports ^
+                                    aquasec/trivy:latest image ^
+                                    ${BACKEND_IMAGE} ^
+                                    --format table ^
+                                    --severity ${severity} ^
+                                    --no-progress ^
+                                    --output /reports/backend-table.txt ^
                                     --exit-code 0
                             """
                             
@@ -95,9 +125,13 @@ pipeline {
                         echo. >> ${REPORTS_DIR}\\summary.txt
                         echo Severity Filter: ${params.SCAN_TYPE} >> ${REPORTS_DIR}\\summary.txt
                         echo. >> ${REPORTS_DIR}\\summary.txt
-                        echo Results available in JSON files: >> ${REPORTS_DIR}\\summary.txt
-                        echo   - frontend-trivy.json >> ${REPORTS_DIR}\\summary.txt
-                        echo   - backend-trivy.json >> ${REPORTS_DIR}\\summary.txt
+                        echo Generated Files: >> ${REPORTS_DIR}\\summary.txt
+                        echo   - frontend-trivy.json (detailed data) >> ${REPORTS_DIR}\\summary.txt
+                        echo   - backend-trivy.json (detailed data) >> ${REPORTS_DIR}\\summary.txt
+                        echo   - frontend-table.txt (readable table) >> ${REPORTS_DIR}\\summary.txt
+                        echo   - backend-table.txt (readable table) >> ${REPORTS_DIR}\\summary.txt
+                        echo. >> ${REPORTS_DIR}\\summary.txt
+                        echo Open the table files to view vulnerability details >> ${REPORTS_DIR}\\summary.txt
                         echo. >> ${REPORTS_DIR}\\summary.txt
                         echo Pipeline completed successfully >> ${REPORTS_DIR}\\summary.txt
                     """
