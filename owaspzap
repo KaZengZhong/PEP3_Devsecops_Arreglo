@@ -1,0 +1,185 @@
+pipeline {
+    agent any
+    
+    parameters {
+        choice(
+            name: 'SCAN_TYPE',
+            choices: ['BASELINE', 'API_SCAN'],
+            description: 'Tipo de escaneo DAST'
+        )
+    }
+    
+    environment {
+        REPORTS_DIR = 'dast-reports'
+        APP_URL = 'http://localhost:8070'
+        API_URL = 'http://localhost:8090'
+    }
+    
+    stages {
+        stage('🚀 Setup') {
+            steps {
+                script {
+                    echo "Iniciando DAST Pipeline - Tipo: ${params.SCAN_TYPE}"
+                    
+                    if (isUnix()) {
+                        sh """
+                            rm -rf ${REPORTS_DIR}
+                            mkdir -p ${REPORTS_DIR}
+                        """
+                    } else {
+                        bat """
+                            if exist ${REPORTS_DIR} rmdir /s /q ${REPORTS_DIR}
+                            mkdir ${REPORTS_DIR}
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('🐳 Deploy App for Testing') {
+            steps {
+                script {
+                    echo "Desplegando aplicación..."
+                    
+                    if (isUnix()) {
+                        sh 'docker-compose up -d'
+                    } else {
+                        bat 'docker-compose up -d'
+                    }
+                    
+                    echo "Esperando que la app esté lista..."
+                    sleep(time: 60, unit: 'SECONDS')
+                    
+                    // Health check
+                    retry(3) {
+                        script {
+                            if (isUnix()) {
+                                sh 'curl -f http://localhost:8070 || sleep 10'
+                            } else {
+                                bat 'curl -f http://localhost:8070 || timeout 10'
+                            }
+                        }
+                    }
+                    
+                    echo "✅ Aplicación lista"
+                }
+            }
+        }
+        
+        stage('🎯 OWASP ZAP Scan') {
+            steps {
+                script {
+                    if (params.SCAN_TYPE == 'BASELINE') {
+                        echo "Ejecutando ZAP Baseline Scan..."
+                        
+                        if (isUnix()) {
+                            sh """
+                                docker run --rm \\
+                                    --network host \\
+                                    -v \$(pwd)/${REPORTS_DIR}:/zap/wrk/:rw \\
+                                    -u zap \\
+                                    owasp/zap2docker-stable zap-baseline.py \\
+                                    -t ${APP_URL} \\
+                                    -J baseline-report.json \\
+                                    -H baseline-report.html \\
+                                    -r baseline-report.xml
+                            """
+                        } else {
+                            bat """
+                                docker run --rm ^
+                                    --network host ^
+                                    -v "%cd%\\${REPORTS_DIR}":/zap/wrk/:rw ^
+                                    -u zap ^
+                                    owasp/zap2docker-stable zap-baseline.py ^
+                                    -t ${APP_URL} ^
+                                    -J baseline-report.json ^
+                                    -H baseline-report.html ^
+                                    -r baseline-report.xml
+                            """
+                        }
+                    } else {
+                        echo "Ejecutando ZAP API Scan..."
+                        
+                        if (isUnix()) {
+                            sh """
+                                docker run --rm \\
+                                    --network host \\
+                                    -v \$(pwd)/${REPORTS_DIR}:/zap/wrk/:rw \\
+                                    -u zap \\
+                                    owasp/zap2docker-stable zap-api-scan.py \\
+                                    -t ${API_URL}/v3/api-docs \\
+                                    -f openapi \\
+                                    -J api-report.json \\
+                                    -H api-report.html \\
+                                    -r api-report.xml || true
+                            """
+                        } else {
+                            bat """
+                                docker run --rm ^
+                                    --network host ^
+                                    -v "%cd%\\${REPORTS_DIR}":/zap/wrk/:rw ^
+                                    -u zap ^
+                                    owasp/zap2docker-stable zap-api-scan.py ^
+                                    -t ${API_URL}/v3/api-docs ^
+                                    -f openapi ^
+                                    -J api-report.json ^
+                                    -H api-report.html ^
+                                    -r api-report.xml || true
+                            """
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('📊 Summary') {
+            steps {
+                script {
+                    if (isUnix()) {
+                        sh """
+                            echo "DAST Scan Results" > ${REPORTS_DIR}/summary.txt
+                            echo "=================" >> ${REPORTS_DIR}/summary.txt
+                            echo "Date: \$(date)" >> ${REPORTS_DIR}/summary.txt
+                            echo "Scan Type: ${params.SCAN_TYPE}" >> ${REPORTS_DIR}/summary.txt
+                            echo "Target: ${APP_URL}" >> ${REPORTS_DIR}/summary.txt
+                            echo "" >> ${REPORTS_DIR}/summary.txt
+                            echo "Files generated:" >> ${REPORTS_DIR}/summary.txt
+                            ls -la ${REPORTS_DIR}/ >> ${REPORTS_DIR}/summary.txt
+                        """
+                    } else {
+                        bat """
+                            echo DAST Scan Results > ${REPORTS_DIR}\\summary.txt
+                            echo ================= >> ${REPORTS_DIR}\\summary.txt
+                            echo Date: %date% %time% >> ${REPORTS_DIR}\\summary.txt
+                            echo Scan Type: ${params.SCAN_TYPE} >> ${REPORTS_DIR}\\summary.txt
+                            echo Target: ${APP_URL} >> ${REPORTS_DIR}\\summary.txt
+                            echo. >> ${REPORTS_DIR}\\summary.txt
+                            echo Files generated: >> ${REPORTS_DIR}\\summary.txt
+                            dir ${REPORTS_DIR} >> ${REPORTS_DIR}\\summary.txt
+                        """
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            archiveArtifacts artifacts: "${REPORTS_DIR}/**/*", allowEmptyArchive: true
+            
+            // Limpiar
+            script {
+                if (isUnix()) {
+                    sh 'docker-compose down || true'
+                } else {
+                    bat 'docker-compose down || true'
+                }
+            }
+            
+            echo "✅ DAST Pipeline completado"
+        }
+        success {
+            echo "🎉 DAST scan successful!"
+        }
+    }
+}
