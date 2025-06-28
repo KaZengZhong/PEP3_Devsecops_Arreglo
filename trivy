@@ -36,33 +36,15 @@ pipeline {
                             
                             def severity = getSeverityLevel(params.SCAN_TYPE)
                             
-                            // JSON scan
                             bat """
                                 docker run --rm ^
                                     -v /var/run/docker.sock:/var/run/docker.sock ^
                                     -v %cd%\\${REPORTS_DIR}:/reports ^
-                                    aquasec/trivy:latest image ^
-                                    ${FRONTEND_IMAGE} ^
-                                    --format json ^
-                                    --severity ${severity} ^
-                                    --output /reports/frontend-trivy.json ^
-                                    --exit-code 0
-                            """
-                            
-                            // Table scan con configuración para terminal simple
-                            bat """
-                                docker run --rm ^
-                                    -v /var/run/docker.sock:/var/run/docker.sock ^
-                                    -v %cd%\\${REPORTS_DIR}:/reports ^
-                                    -e TERM=dumb ^
-                                    -e NO_COLOR=1 ^
                                     aquasec/trivy:latest image ^
                                     ${FRONTEND_IMAGE} ^
                                     --format table ^
                                     --severity ${severity} ^
-                                    --no-progress ^
-                                    --quiet ^
-                                    --output /reports/frontend-table.txt ^
+                                    --output /reports/frontend-scan.txt ^
                                     --exit-code 0
                             """
                             
@@ -78,33 +60,15 @@ pipeline {
                             
                             def severity = getSeverityLevel(params.SCAN_TYPE)
                             
-                            // JSON scan
                             bat """
                                 docker run --rm ^
                                     -v /var/run/docker.sock:/var/run/docker.sock ^
                                     -v %cd%\\${REPORTS_DIR}:/reports ^
-                                    aquasec/trivy:latest image ^
-                                    ${BACKEND_IMAGE} ^
-                                    --format json ^
-                                    --severity ${severity} ^
-                                    --output /reports/backend-trivy.json ^
-                                    --exit-code 0
-                            """
-                            
-                            // Table scan con configuración para terminal simple
-                            bat """
-                                docker run --rm ^
-                                    -v /var/run/docker.sock:/var/run/docker.sock ^
-                                    -v %cd%\\${REPORTS_DIR}:/reports ^
-                                    -e TERM=dumb ^
-                                    -e NO_COLOR=1 ^
                                     aquasec/trivy:latest image ^
                                     ${BACKEND_IMAGE} ^
                                     --format table ^
                                     --severity ${severity} ^
-                                    --no-progress ^
-                                    --quiet ^
-                                    --output /reports/backend-table.txt ^
+                                    --output /reports/backend-scan.txt ^
                                     --exit-code 0
                             """
                             
@@ -125,21 +89,12 @@ pipeline {
                         echo ================================ >> ${REPORTS_DIR}\\summary.txt
                         echo. >> ${REPORTS_DIR}\\summary.txt
                         echo Scan Date: %date% %time% >> ${REPORTS_DIR}\\summary.txt
-                        echo Images Scanned: >> ${REPORTS_DIR}\\summary.txt
-                        echo   Frontend: ${FRONTEND_IMAGE} >> ${REPORTS_DIR}\\summary.txt
-                        echo   Backend: ${BACKEND_IMAGE} >> ${REPORTS_DIR}\\summary.txt
-                        echo. >> ${REPORTS_DIR}\\summary.txt
                         echo Severity Filter: ${params.SCAN_TYPE} >> ${REPORTS_DIR}\\summary.txt
                         echo. >> ${REPORTS_DIR}\\summary.txt
-                        echo Generated Files: >> ${REPORTS_DIR}\\summary.txt
-                        echo   - frontend-trivy.json (detailed data) >> ${REPORTS_DIR}\\summary.txt
-                        echo   - backend-trivy.json (detailed data) >> ${REPORTS_DIR}\\summary.txt
-                        echo   - frontend-table.txt (readable table) >> ${REPORTS_DIR}\\summary.txt
-                        echo   - backend-table.txt (readable table) >> ${REPORTS_DIR}\\summary.txt
+                        echo Frontend: ${FRONTEND_IMAGE} >> ${REPORTS_DIR}\\summary.txt
+                        echo Backend: ${BACKEND_IMAGE} >> ${REPORTS_DIR}\\summary.txt
                         echo. >> ${REPORTS_DIR}\\summary.txt
-                        echo Open the table files to view vulnerability details >> ${REPORTS_DIR}\\summary.txt
-                        echo. >> ${REPORTS_DIR}\\summary.txt
-                        echo Pipeline completed successfully >> ${REPORTS_DIR}\\summary.txt
+                        echo Check frontend-scan.txt and backend-scan.txt for details >> ${REPORTS_DIR}\\summary.txt
                     """
                 }
             }
@@ -149,11 +104,6 @@ pipeline {
             steps {
                 script {
                     echo "Archivando resultados..."
-                    
-                    bat """
-                        echo Files generated: > ${REPORTS_DIR}\\files.txt
-                        dir ${REPORTS_DIR} >> ${REPORTS_DIR}\\files.txt
-                    """
                 }
             }
         }
