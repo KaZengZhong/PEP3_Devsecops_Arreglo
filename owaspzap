@@ -75,41 +75,79 @@ pipeline {
                     // Verificar contenedores
                     bat 'docker ps'
                     
-                    // Verificar Frontend
-                    try {
-                        bat 'curl -s http://localhost:8070 > nul'
-                        echo "✅ Frontend (React/Angular) accesible en puerto 8070"
-                    } catch (Exception e) {
-                        echo "⚠️ Frontend warning: ${e.message}"
+                    // Verificar Frontend con timeout y retry
+                    def frontendOk = false
+                    for (int i = 0; i < 3; i++) {
+                        try {
+                            bat 'powershell -Command "try { Invoke-WebRequest -Uri http://localhost:8070 -TimeoutSec 10 -UseBasicParsing | Out-Null; exit 0 } catch { exit 1 }"'
+                            echo "✅ Frontend (React/Angular) accesible en puerto 8070"
+                            frontendOk = true
+                            break
+                        } catch (Exception e) {
+                            echo "⚠️ Frontend intento ${i+1}/3 falló: ${e.message}"
+                            if (i < 2) sleep(time: 30, unit: 'SECONDS')
+                        }
                     }
                     
-                    // Verificar Backend
-                    try {
-                        bat 'curl -s http://localhost:8090 > nul'
-                        echo "✅ Backend (Spring Boot) accesible en puerto 8090"
-                    } catch (Exception e) {
-                        echo "⚠️ Backend warning: ${e.message}"
+                    // Verificar Backend con timeout y retry
+                    def backendOk = false
+                    for (int i = 0; i < 3; i++) {
+                        try {
+                            bat 'powershell -Command "try { Invoke-WebRequest -Uri http://localhost:8090 -TimeoutSec 10 -UseBasicParsing | Out-Null; exit 0 } catch { exit 1 }"'
+                            echo "✅ Backend (Spring Boot) accesible en puerto 8090"
+                            backendOk = true
+                            break
+                        } catch (Exception e) {
+                            echo "⚠️ Backend intento ${i+1}/3 falló: ${e.message}"
+                            if (i < 2) sleep(time: 30, unit: 'SECONDS')
+                        }
                     }
                     
-                    // Verificar PostgreSQL
+                    // Verificar PostgreSQL con manejo de errores mejorado
+                    def dbOk = false
                     try {
-                        bat 'netstat -an | findstr :5433'
+                        bat 'netstat -an | findstr ":5433" && echo Database port found'
                         echo "✅ PostgreSQL Database accesible en puerto 5433"
+                        dbOk = true
                     } catch (Exception e) {
                         echo "⚠️ Database warning: ${e.message}"
+                        // Verificar de manera alternativa
+                        try {
+                            bat 'powershell -Command "Test-NetConnection -ComputerName localhost -Port 5433"'
+                            echo "✅ PostgreSQL Database accesible (verificación alternativa)"
+                            dbOk = true
+                        } catch (Exception e2) {
+                            echo "⚠️ Database no accesible en puerto 5433"
+                        }
                     }
                     
-                    // Generar reporte de conectividad
+                    // Generar reporte de conectividad con manejo de errores
                     bat """
                         echo === PRESTABANCO SERVICES CONNECTIVITY === > ${REPORTS_DIR}\\connectivity-report.txt
                         echo Date: %date% %time% >> ${REPORTS_DIR}\\connectivity-report.txt
                         echo. >> ${REPORTS_DIR}\\connectivity-report.txt
                         echo Services Status: >> ${REPORTS_DIR}\\connectivity-report.txt
-                        docker ps --format "table {{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}" >> ${REPORTS_DIR}\\connectivity-report.txt
+                    """
+                    
+                    try {
+                        bat 'docker ps --format "table {{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}" >> %cd%\\' + "${REPORTS_DIR}\\connectivity-report.txt"
+                    } catch (Exception e) {
+                        echo "Warning: Could not get docker ps info: ${e.message}"
+                        bat 'echo "Docker containers info not available" >> ' + "${REPORTS_DIR}\\connectivity-report.txt"
+                    }
+                    
+                    bat """
                         echo. >> ${REPORTS_DIR}\\connectivity-report.txt
                         echo Port Status: >> ${REPORTS_DIR}\\connectivity-report.txt
-                        netstat -an | findstr ":8070\\|:8090\\|:5433" >> ${REPORTS_DIR}\\connectivity-report.txt
+                        echo Frontend (8070): ${frontendOk ? 'ACCESSIBLE' : 'NOT ACCESSIBLE'} >> ${REPORTS_DIR}\\connectivity-report.txt
+                        echo Backend (8090): ${backendOk ? 'ACCESSIBLE' : 'NOT ACCESSIBLE'} >> ${REPORTS_DIR}\\connectivity-report.txt
+                        echo Database (5433): ${dbOk ? 'ACCESSIBLE' : 'NOT ACCESSIBLE'} >> ${REPORTS_DIR}\\connectivity-report.txt
                     """
+                    
+                    // Verificar que al menos Frontend y Backend estén accesibles
+                    if (!frontendOk && !backendOk) {
+                        error("Ni Frontend ni Backend están accesibles. Revisar despliegue.")
+                    }
                 }
             }
         }
@@ -122,8 +160,13 @@ pipeline {
                     try {
                         def scanDuration = getScanDuration(params.SCAN_DEPTH)
                         
-                        // Scan completo del frontend
-                        bat "docker run --rm -v \"%cd%\\${REPORTS_DIR}\\frontend:/zap/wrk\" zaproxy/zap-stable zap-baseline.py -t ${FRONTEND_URL} -J frontend-security.json -r frontend-security.xml -d"
+                        // Verificar que el frontend esté accesible antes del scan
+                        bat 'powershell -Command "try { Invoke-WebRequest -Uri http://localhost:8070 -TimeoutSec 10 -UseBasicParsing | Out-Null } catch { throw \\"Frontend not accessible for scanning\\" }"'
+                        
+                        // Scan completo del frontend con timeout
+                        timeout(time: 30, unit: 'MINUTES') {
+                            bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}\\frontend:/zap/wrk\" zaproxy/zap-stable zap-baseline.py -t ${FRONTEND_URL} -J frontend-security.json -r frontend-security.xml -d"
+                        }
                         
                         echo "Frontend security scan completado"
                         
@@ -140,6 +183,8 @@ pipeline {
                             echo Scan Type: Web Application Security Testing >> ${REPORTS_DIR}\\frontend\\frontend-analysis.txt
                             echo Tool: OWASP ZAP Baseline Scanner >> ${REPORTS_DIR}\\frontend\\frontend-analysis.txt
                             echo Depth: ${params.SCAN_DEPTH} >> ${REPORTS_DIR}\\frontend\\frontend-analysis.txt
+                            echo Status: Scan attempted - Check logs for details >> ${REPORTS_DIR}\\frontend\\frontend-analysis.txt
+                            echo Error: ${e.message} >> ${REPORTS_DIR}\\frontend\\frontend-analysis.txt
                             echo. >> ${REPORTS_DIR}\\frontend\\frontend-analysis.txt
                             echo Security Analysis: >> ${REPORTS_DIR}\\frontend\\frontend-analysis.txt
                             echo - Cross-Site Scripting (XSS) detection >> ${REPORTS_DIR}\\frontend\\frontend-analysis.txt
@@ -147,8 +192,6 @@ pipeline {
                             echo - Authentication bypass attempts >> ${REPORTS_DIR}\\frontend\\frontend-analysis.txt
                             echo - Session management analysis >> ${REPORTS_DIR}\\frontend\\frontend-analysis.txt
                             echo - Input validation testing >> ${REPORTS_DIR}\\frontend\\frontend-analysis.txt
-                            echo. >> ${REPORTS_DIR}\\frontend\\frontend-analysis.txt
-                            echo Status: Frontend security scan executed successfully >> ${REPORTS_DIR}\\frontend\\frontend-analysis.txt
                         """
                     }
                 }
@@ -161,8 +204,13 @@ pipeline {
                     echo "=== ESCANEANDO BACKEND API REST ==="
                     
                     try {
-                        // Scan del backend/API
-                        bat "docker run --rm -v \"%cd%\\${REPORTS_DIR}\\backend:/zap/wrk\" zaproxy/zap-stable zap-baseline.py -t ${BACKEND_URL} -J backend-api-security.json -r backend-api-security.xml -d"
+                        // Verificar que el backend esté accesible antes del scan
+                        bat 'powershell -Command "try { Invoke-WebRequest -Uri http://localhost:8090 -TimeoutSec 10 -UseBasicParsing | Out-Null } catch { throw \\"Backend not accessible for scanning\\" }"'
+                        
+                        // Scan del backend/API con timeout
+                        timeout(time: 30, unit: 'MINUTES') {
+                            bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}\\backend:/zap/wrk\" zaproxy/zap-stable zap-baseline.py -t ${BACKEND_URL} -J backend-api-security.json -r backend-api-security.xml -d"
+                        }
                         
                         echo "Backend API security scan completado"
                         
@@ -179,6 +227,8 @@ pipeline {
                             echo Scan Type: REST API Security Testing >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
                             echo Tool: OWASP ZAP API Scanner >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
                             echo Depth: ${params.SCAN_DEPTH} >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
+                            echo Status: Scan attempted - Check logs for details >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
+                            echo Error: ${e.message} >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
                             echo. >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
                             echo API Security Analysis: >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
                             echo - REST endpoint vulnerability assessment >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
@@ -187,8 +237,6 @@ pipeline {
                             echo - JSON injection testing >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
                             echo - Rate limiting and DoS protection >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
                             echo - CORS policy analysis >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
-                            echo. >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
-                            echo Status: Backend API security scan executed successfully >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
                         """
                     }
                 }
@@ -204,8 +252,10 @@ pipeline {
                     echo "=== ESCANEANDO POSTGRESQL DATABASE ==="
                     
                     try {
-                        // Escaneo de puerto PostgreSQL con nmap via Docker
-                        bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}\\database:/reports\" instrumentisto/nmap -sS -sV -p 5433 ${POSTGRES_HOST} -oX /reports/postgres-scan.xml -oN /reports/postgres-scan.txt"
+                        // Escaneo de puerto PostgreSQL con nmap via Docker y timeout
+                        timeout(time: 15, unit: 'MINUTES') {
+                            bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}\\database:/reports\" instrumentisto/nmap -sS -sV -p 5433 ${POSTGRES_HOST} -oX /reports/postgres-scan.xml -oN /reports/postgres-scan.txt"
+                        }
                         
                         echo "PostgreSQL security scan completado"
                         
@@ -232,10 +282,14 @@ pipeline {
                         echo - Network exposure analysis >> ${REPORTS_DIR}\\database\\database-analysis.txt
                         echo. >> ${REPORTS_DIR}\\database\\database-analysis.txt
                         echo Container Info: >> ${REPORTS_DIR}\\database\\database-analysis.txt
-                        docker ps --filter name=postgres >> ${REPORTS_DIR}\\database\\database-analysis.txt
-                        echo. >> ${REPORTS_DIR}\\database\\database-analysis.txt
                         echo Status: Database security assessment completed >> ${REPORTS_DIR}\\database\\database-analysis.txt
                     """
+                    
+                    try {
+                        bat 'docker ps --filter name=postgres >> %cd%\\' + "${REPORTS_DIR}\\database\\database-analysis.txt"
+                    } catch (Exception e) {
+                        echo "Could not get postgres container info: ${e.message}"
+                    }
                 }
             }
         }
@@ -276,38 +330,6 @@ pipeline {
                         echo      - Database: prestabanco >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
                         echo      - Scan Type: Database Security Assessment >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
                         echo. >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo SECURITY TOOLS USED: >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   🛡️ OWASP ZAP - Dynamic Application Security Testing >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   🔍 Nmap - Network and Port Security Scanning >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   📊 Baseline Scanner - Web Vulnerability Assessment >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo. >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo VULNERABILITY CATEGORIES TESTED: >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   • Cross-Site Scripting (XSS) >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   • SQL Injection >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   • Authentication Bypass >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   • Session Management >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   • Input Validation >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   • API Security >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   • Database Security >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   • Network Exposure >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo. >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo GENERATED REPORTS: >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   📁 frontend/ >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo      - frontend-security.json >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo      - frontend-security.xml >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo      - frontend-analysis.txt >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   📁 backend/ >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo      - backend-api-security.json >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo      - backend-api-security.xml >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo      - backend-analysis.txt >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   📁 database/ >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo      - postgres-scan.xml >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo      - postgres-scan.txt >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo      - database-analysis.txt >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo. >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo DEPLOYMENT STATUS: >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        docker ps --format "{{.Names}}\\t{{.Image}}\\t{{.Status}}" >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo. >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
                         echo ✅ FULL STACK DAST SECURITY ANALYSIS COMPLETED >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
                         echo 🎯 All PrestaBanco components analyzed for security vulnerabilities >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
                         echo 🔒 Ready for security review and production deployment >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
@@ -342,17 +364,6 @@ pipeline {
                         echo   Port: ${POSTGRES_PORT} >> ${REPORTS_DIR}\\summary\\access-info.txt
                         echo   Database: prestabanco >> ${REPORTS_DIR}\\summary\\access-info.txt
                         echo   Technology: PostgreSQL >> ${REPORTS_DIR}\\summary\\access-info.txt
-                        echo. >> ${REPORTS_DIR}\\summary\\access-info.txt
-                        echo 🛠️ MANAGEMENT COMMANDS: >> ${REPORTS_DIR}\\summary\\access-info.txt
-                        echo. >> ${REPORTS_DIR}\\summary\\access-info.txt
-                        echo View running containers: >> ${REPORTS_DIR}\\summary\\access-info.txt
-                        echo   docker ps >> ${REPORTS_DIR}\\summary\\access-info.txt
-                        echo. >> ${REPORTS_DIR}\\summary\\access-info.txt
-                        echo Stop all services: >> ${REPORTS_DIR}\\summary\\access-info.txt
-                        echo   docker-compose -f compose2.yml down >> ${REPORTS_DIR}\\summary\\access-info.txt
-                        echo. >> ${REPORTS_DIR}\\summary\\access-info.txt
-                        echo Restart services: >> ${REPORTS_DIR}\\summary\\access-info.txt
-                        echo   docker-compose -f compose2.yml restart >> ${REPORTS_DIR}\\summary\\access-info.txt
                         echo. >> ${REPORTS_DIR}\\summary\\access-info.txt
                         echo ⚡ CONTAINERS WILL REMAIN RUNNING FOR TESTING ⚡ >> ${REPORTS_DIR}\\summary\\access-info.txt
                     """
