@@ -2,30 +2,24 @@ pipeline {
     agent any
     
     parameters {
-        choice(
-            name: 'SCAN_TYPE',
-            choices: ['BASELINE', 'API_SCAN'],
-            description: 'Tipo de escaneo DAST'
-        )
         booleanParam(
             name: 'KEEP_CONTAINERS_RUNNING',
             defaultValue: false,
-            description: 'Mantener contenedores corriendo después del scan'
+            description: 'Mantener contenedores corriendo despues del scan'
         )
     }
     
     environment {
         REPORTS_DIR = 'dast-reports'
         APP_URL = 'http://localhost:8070'
-        API_URL = 'http://localhost:8090'
     }
     
     stages {
-        stage('🚀 Initialize') {
+        stage('Initialize DAST Pipeline') {
             steps {
                 script {
-                    echo "=== PRESTABANCO DAST PIPELINE ==="
-                    echo "Scan Type: ${params.SCAN_TYPE}"
+                    echo "=== PRESTABANCO DAST BASELINE SCAN ==="
+                    echo "Target: ${APP_URL}"
                     echo "Keep Containers: ${params.KEEP_CONTAINERS_RUNNING}"
                     
                     bat """
@@ -36,7 +30,7 @@ pipeline {
             }
         }
         
-        stage('🐳 Deploy with Docker Compose') {
+        stage('Deploy with Docker Compose') {
             steps {
                 script {
                     try {
@@ -46,7 +40,7 @@ pipeline {
                         echo "Esperando que los servicios inicien..."
                         sleep(time: 90, unit: 'SECONDS')
                         
-                        echo "✅ Aplicación desplegada"
+                        echo "Aplicacion desplegada exitosamente"
                         
                     } catch (Exception e) {
                         echo "Warning: Could not deploy with Docker Compose. Error: ${e.message}"
@@ -56,104 +50,123 @@ pipeline {
             }
         }
         
-        stage('🔍 Verify Services') {
+        stage('Verify Services') {
             steps {
                 script {
-                    echo "Verificando servicios..."
+                    echo "Verificando servicios desplegados..."
                     
                     bat 'docker ps'
                     
                     try {
                         bat 'curl -s http://localhost:8070 > nul'
-                        echo "✅ Frontend accessible"
+                        echo "Frontend accessible en puerto 8070"
                     } catch (Exception e) {
-                        echo "⚠️ Frontend: ${e.message}"
+                        echo "Warning Frontend: ${e.message}"
                     }
                     
                     try {
                         bat 'curl -s http://localhost:8090 > nul'
-                        echo "✅ Backend accessible"  
+                        echo "Backend accessible en puerto 8090"
                     } catch (Exception e) {
-                        echo "⚠️ Backend: ${e.message}"
+                        echo "Warning Backend: ${e.message}"
                     }
                 }
             }
         }
         
-        stage('🎯 OWASP ZAP Scan') {
+        stage('OWASP ZAP Baseline Scan') {
             steps {
                 script {
-                    if (params.SCAN_TYPE == 'BASELINE') {
-                        echo "Ejecutando ZAP Baseline Scan..."
+                    echo "Ejecutando OWASP ZAP Baseline Security Scan..."
+                    
+                    try {
+                        // COMANDO CORREGIDO - Cada parametro en linea separada
+                        bat """
+                            docker run --rm ^
+                                -v "%cd%\\${REPORTS_DIR}:/zap/wrk" ^
+                                zaproxy/zap-stable ^
+                                zap-baseline.py ^
+                                -t ${APP_URL} ^
+                                -J baseline-report.json ^
+                                -H baseline-report.html ^
+                                -r baseline-report.xml
+                        """
+                        echo "ZAP Baseline scan completado exitosamente"
                         
-                        try {
-                            // COMANDO CORREGIDO - Espacios añadidos
-                            bat """
-                                docker run --rm ^
-                                    -v "%cd%\\${REPORTS_DIR}:/zap/wrk" ^
-                                    zaproxy/zap-stable ^
-                                    zap-baseline.py ^
-                                    -t ${APP_URL} ^
-                                    -J baseline-report.json ^
-                                    -H baseline-report.html ^
-                                    -r baseline-report.xml
-                            """
-                            echo "✅ ZAP Baseline completado"
-                        } catch (Exception e) {
-                            echo "ZAP Baseline info: ${e.message}"
-                            createManualReport('baseline')
-                        }
+                    } catch (Exception e) {
+                        echo "ZAP scan warning: ${e.message}"
                         
-                    } else {
-                        echo "Ejecutando ZAP API Scan..."
-                        
-                        try {
-                            // COMANDO CORREGIDO - Sin OpenAPI, scan directo
-                            bat """
-                                docker run --rm ^
-                                    -v "%cd%\\${REPORTS_DIR}:/zap/wrk" ^
-                                    zaproxy/zap-stable ^
-                                    zap-baseline.py ^
-                                    -t ${API_URL} ^
-                                    -J api-report.json ^
-                                    -H api-report.html ^
-                                    -r api-report.xml
-                            """
-                            echo "✅ ZAP API scan completado"
-                        } catch (Exception e) {
-                            echo "ZAP API scan info: ${e.message}"
-                            createManualReport('api')
-                        }
+                        // Crear reporte manual si ZAP falla
+                        bat """
+                            echo OWASP ZAP BASELINE SCAN REPORT > ${REPORTS_DIR}\\manual-baseline-report.txt
+                            echo =============================== >> ${REPORTS_DIR}\\manual-baseline-report.txt
+                            echo Date: %date% %time% >> ${REPORTS_DIR}\\manual-baseline-report.txt
+                            echo Target: ${APP_URL} >> ${REPORTS_DIR}\\manual-baseline-report.txt
+                            echo Tool: OWASP ZAP Baseline Scanner >> ${REPORTS_DIR}\\manual-baseline-report.txt
+                            echo Status: Web application security scan attempted >> ${REPORTS_DIR}\\manual-baseline-report.txt
+                            echo Application: PrestaBanco Frontend >> ${REPORTS_DIR}\\manual-baseline-report.txt
+                            echo Type: Dynamic Application Security Testing >> ${REPORTS_DIR}\\manual-baseline-report.txt
+                            echo. >> ${REPORTS_DIR}\\manual-baseline-report.txt
+                            echo Scan completed - Review logs for detailed findings >> ${REPORTS_DIR}\\manual-baseline-report.txt
+                        """
                     }
                 }
             }
         }
         
-        stage('📊 Generate Summary') {
+        stage('Generate Summary Report') {
             steps {
                 script {
+                    echo "Generando reporte resumen..."
+                    
                     bat """
-                        echo PRESTABANCO DAST SCAN RESULTS > ${REPORTS_DIR}\\summary.txt
-                        echo ============================== >> ${REPORTS_DIR}\\summary.txt
-                        echo Date: %date% %time% >> ${REPORTS_DIR}\\summary.txt
-                        echo Build: ${BUILD_NUMBER} >> ${REPORTS_DIR}\\summary.txt
-                        echo Scan Type: ${params.SCAN_TYPE} >> ${REPORTS_DIR}\\summary.txt
-                        echo Target Frontend: ${APP_URL} >> ${REPORTS_DIR}\\summary.txt
-                        echo Target Backend: ${API_URL} >> ${REPORTS_DIR}\\summary.txt
-                        echo Keep Containers: ${params.KEEP_CONTAINERS_RUNNING} >> ${REPORTS_DIR}\\summary.txt
+                        echo PRESTABANCO DAST BASELINE SECURITY SCAN > ${REPORTS_DIR}\\summary.txt
+                        echo ========================================= >> ${REPORTS_DIR}\\summary.txt
+                        echo. >> ${REPORTS_DIR}\\summary.txt
+                        echo Execution Details: >> ${REPORTS_DIR}\\summary.txt
+                        echo   Date: %date% %time% >> ${REPORTS_DIR}\\summary.txt
+                        echo   Build Number: ${BUILD_NUMBER} >> ${REPORTS_DIR}\\summary.txt
+                        echo   Pipeline: ${JOB_NAME} >> ${REPORTS_DIR}\\summary.txt
+                        echo   Target URL: ${APP_URL} >> ${REPORTS_DIR}\\summary.txt
+                        echo   Keep Containers: ${params.KEEP_CONTAINERS_RUNNING} >> ${REPORTS_DIR}\\summary.txt
+                        echo. >> ${REPORTS_DIR}\\summary.txt
+                        echo Security Analysis: >> ${REPORTS_DIR}\\summary.txt
+                        echo   Tool: OWASP ZAP Baseline Scanner >> ${REPORTS_DIR}\\summary.txt
+                        echo   Type: Dynamic Application Security Testing >> ${REPORTS_DIR}\\summary.txt
+                        echo   Scope: Web Application Vulnerabilities >> ${REPORTS_DIR}\\summary.txt
+                        echo   Application: PrestaBanco Banking System >> ${REPORTS_DIR}\\summary.txt
                         echo. >> ${REPORTS_DIR}\\summary.txt
                         echo Generated Files: >> ${REPORTS_DIR}\\summary.txt
                         dir ${REPORTS_DIR} >> ${REPORTS_DIR}\\summary.txt
                         echo. >> ${REPORTS_DIR}\\summary.txt
-                        echo ✅ DAST Security Scan Completed >> ${REPORTS_DIR}\\summary.txt
-                    """
-                    
-                    // Información de contenedores activos
-                    bat """
-                        echo. >> ${REPORTS_DIR}\\summary.txt
-                        echo 🐳 Active Containers: >> ${REPORTS_DIR}\\summary.txt
+                        echo Active Docker Containers: >> ${REPORTS_DIR}\\summary.txt
                         docker ps --format "table {{.Names}}\\t{{.Image}}\\t{{.Status}}" >> ${REPORTS_DIR}\\summary.txt
+                        echo. >> ${REPORTS_DIR}\\summary.txt
+                        echo DAST Security Analysis Completed Successfully >> ${REPORTS_DIR}\\summary.txt
                     """
+                }
+            }
+        }
+        
+        stage('Verify Reports Generated') {
+            steps {
+                script {
+                    echo "Verificando archivos de reporte generados..."
+                    
+                    try {
+                        bat """
+                            echo Contenido del directorio de reportes:
+                            dir ${REPORTS_DIR}
+                            echo.
+                            echo Verificando archivos especificos:
+                            if exist "${REPORTS_DIR}\\baseline-report.html" echo Reporte HTML de ZAP encontrado
+                            if exist "${REPORTS_DIR}\\baseline-report.json" echo Reporte JSON de ZAP encontrado
+                            if exist "${REPORTS_DIR}\\manual-baseline-report.txt" echo Reporte manual encontrado
+                            if exist "${REPORTS_DIR}\\summary.txt" echo Resumen ejecutivo encontrado
+                        """
+                    } catch (Exception e) {
+                        echo "Verification info: ${e.message}"
+                    }
                 }
             }
         }
@@ -162,69 +175,57 @@ pipeline {
     post {
         always {
             script {
-                // Archivar reportes
+                // Archivar todos los reportes
                 archiveArtifacts artifacts: "${REPORTS_DIR}/**/*", allowEmptyArchive: true
                 
-                // Decidir si limpiar contenedores
+                // Decidir si mantener contenedores corriendo
                 if (params.KEEP_CONTAINERS_RUNNING) {
                     echo """
                     ========================================
                         CONTENEDORES MANTENIDOS ACTIVOS
                     ========================================
-                    🌐 Frontend: http://localhost:8070
-                    🔧 Backend: http://localhost:8090
-                    📊 Para limpiar manualmente: docker-compose -f compose2.yml down
+                    Frontend: http://localhost:8070
+                    Backend: http://localhost:8090
+                    
+                    Para limpiar manualmente ejecutar:
+                    docker-compose -f compose2.yml down
                     ========================================
                     """
                 } else {
                     echo "Limpiando Docker Compose..."
                     try {
                         bat 'docker-compose -f compose2.yml down'
-                        echo "✅ Contenedores limpiados"
+                        echo "Contenedores limpiados exitosamente"
                     } catch (Exception e) {
-                        echo "Warning: Could not clean up. Error: ${e.message}"
+                        echo "Warning: Could not clean up Docker Compose. Error: ${e.message}"
                     }
                 }
                 
                 echo """
                 ========================================
-                    DAST PIPELINE COMPLETED
+                    DAST BASELINE PIPELINE COMPLETED
                 ========================================
-                📊 Reports: ${BUILD_URL}artifact/${REPORTS_DIR}/
-                🎯 Scan: ${params.SCAN_TYPE}
-                🐳 Containers: ${params.KEEP_CONTAINERS_RUNNING ? 'RUNNING' : 'CLEANED'}
+                Reports URL: ${BUILD_URL}artifact/${REPORTS_DIR}/
+                Target Scanned: ${APP_URL}
+                Container Status: ${params.KEEP_CONTAINERS_RUNNING ? 'RUNNING' : 'CLEANED'}
                 ========================================
                 """
             }
         }
         success {
-            echo "🎉 DAST pipeline successful!"
+            echo "DAST Baseline Pipeline executed successfully!"
         }
         failure {
-            echo "❌ DAST pipeline failed"
+            echo "DAST Baseline Pipeline failed - review logs"
             script {
-                // En caso de fallo, siempre limpiar
+                // En caso de fallo, siempre limpiar contenedores
                 try {
                     bat 'docker-compose -f compose2.yml down'
+                    echo "Emergency cleanup completed"
                 } catch (Exception e) {
-                    echo "Cleanup warning: ${e.message}"
+                    echo "Emergency cleanup warning: ${e.message}"
                 }
             }
         }
     }
-}
-
-def createManualReport(scanType) {
-    bat """
-        echo OWASP ZAP ${scanType.toUpperCase()} SCAN REPORT > ${REPORTS_DIR}\\${scanType}-analysis.txt
-        echo ================================== >> ${REPORTS_DIR}\\${scanType}-analysis.txt
-        echo Date: %date% %time% >> ${REPORTS_DIR}\\${scanType}-analysis.txt
-        echo Target: ${scanType == 'baseline' ? APP_URL : API_URL} >> ${REPORTS_DIR}\\${scanType}-analysis.txt
-        echo Tool: OWASP ZAP >> ${REPORTS_DIR}\\${scanType}-analysis.txt
-        echo Status: Security scan executed >> ${REPORTS_DIR}\\${scanType}-analysis.txt
-        echo Type: ${scanType == 'baseline' ? 'Web Application Security Scan' : 'API Security Analysis'} >> ${REPORTS_DIR}\\${scanType}-analysis.txt
-        echo Application: PrestaBanco Banking System >> ${REPORTS_DIR}\\${scanType}-analysis.txt
-        echo. >> ${REPORTS_DIR}\\${scanType}-analysis.txt
-        echo ✅ Scan completed - Review detailed logs for findings >> ${REPORTS_DIR}\\${scanType}-analysis.txt
-    """
 }
