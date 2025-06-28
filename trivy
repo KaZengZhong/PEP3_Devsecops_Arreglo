@@ -76,6 +76,30 @@ pipeline {
                         }
                     }
                 }
+                
+                stage('PostgreSQL Scan') {
+                    steps {
+                        script {
+                            echo "Escaneando PostgreSQL..."
+                            
+                            def severity = getSeverityLevel(params.SCAN_TYPE)
+                            
+                            bat """
+                                docker run --rm ^
+                                    -v /var/run/docker.sock:/var/run/docker.sock ^
+                                    -v %cd%\\${REPORTS_DIR}:/reports ^
+                                    aquasec/trivy:latest image ^
+                                    postgres:latest ^
+                                    --format table ^
+                                    --severity ${severity} ^
+                                    --output /reports/postgres-scan.txt ^
+                                    --exit-code 0
+                            """
+                            
+                            echo "PostgreSQL scan completado"
+                        }
+                    }
+                }
             }
         }
         
@@ -91,10 +115,17 @@ pipeline {
                         echo Scan Date: %date% %time% >> ${REPORTS_DIR}\\summary.txt
                         echo Severity Filter: ${params.SCAN_TYPE} >> ${REPORTS_DIR}\\summary.txt
                         echo. >> ${REPORTS_DIR}\\summary.txt
-                        echo Frontend: ${FRONTEND_IMAGE} >> ${REPORTS_DIR}\\summary.txt
-                        echo Backend: ${BACKEND_IMAGE} >> ${REPORTS_DIR}\\summary.txt
+                        echo Components Scanned: >> ${REPORTS_DIR}\\summary.txt
+                        echo   Frontend: ${FRONTEND_IMAGE} >> ${REPORTS_DIR}\\summary.txt
+                        echo   Backend: ${BACKEND_IMAGE} >> ${REPORTS_DIR}\\summary.txt
+                        echo   Database: postgres:latest >> ${REPORTS_DIR}\\summary.txt
                         echo. >> ${REPORTS_DIR}\\summary.txt
-                        echo Check frontend-scan.txt and backend-scan.txt for details >> ${REPORTS_DIR}\\summary.txt
+                        echo Generated Reports: >> ${REPORTS_DIR}\\summary.txt
+                        echo   - frontend-scan.txt >> ${REPORTS_DIR}\\summary.txt
+                        echo   - backend-scan.txt >> ${REPORTS_DIR}\\summary.txt
+                        echo   - postgres-scan.txt >> ${REPORTS_DIR}\\summary.txt
+                        echo. >> ${REPORTS_DIR}\\summary.txt
+                        echo Full stack security analysis completed >> ${REPORTS_DIR}\\summary.txt
                     """
                 }
             }
