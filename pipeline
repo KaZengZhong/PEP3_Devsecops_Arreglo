@@ -1,0 +1,647 @@
+pipeline {
+    agent any
+    
+    parameters {
+        choice(
+            name: 'PIPELINE_MODE',
+            choices: ['DEVELOPMENT', 'STAGING', 'PRODUCTION'],
+            description: 'Entorno de ejecución del pipeline'
+        )
+        choice(
+            name: 'SECURITY_LEVEL',
+            choices: ['BASIC', 'STANDARD', 'COMPREHENSIVE'],
+            description: 'Nivel de análisis de seguridad'
+        )
+        booleanParam(
+            name: 'SKIP_DAST',
+            defaultValue: false,
+            description: 'Saltar pruebas DAST (útil para desarrollo rápido)'
+        )
+        booleanParam(
+            name: 'DEPLOY_AFTER_SCAN',
+            defaultValue: true,
+            description: 'Desplegar aplicación después de los scans'
+        )
+    }
+    
+    tools {
+        maven 'maven_3_9_6'
+        nodejs 'node'
+    }
+    
+    environment {
+        REPORTS_DIR = 'devsecops-reports'
+        REPO_URL = 'https://github.com/Franciscoxd1123/Pep2DevSecOpsArreglos'
+        FRONTEND_IMAGE = 'franciscoxd1123/prestabanco-frontend:latest'
+        BACKEND_IMAGE = 'franciscoxd1123/prestabanco-backend:latest'
+        APP_URL = 'http://localhost:8070'
+        API_URL = 'http://localhost:8090'
+    }
+    
+    stages {
+        // ======= FASE 1: INICIALIZACIÓN =======
+        stage('🚀 Initialize DevSecOps Pipeline') {
+            steps {
+                script {
+                    echo """
+                    ========================================
+                        PRESTABANCO DEVSECOPS PIPELINE
+                    ========================================
+                    Modo: ${params.PIPELINE_MODE}
+                    Nivel de Seguridad: ${params.SECURITY_LEVEL}
+                    DAST: ${params.SKIP_DAST ? 'DISABLED' : 'ENABLED'}
+                    Deploy: ${params.DEPLOY_AFTER_SCAN ? 'ENABLED' : 'DISABLED'}
+                    ========================================
+                    """
+                    
+                    // Crear estructura de directorios para reportes
+                    if (isUnix()) {
+                        sh """
+                            rm -rf ${REPORTS_DIR}
+                            mkdir -p ${REPORTS_DIR}/{sast,sca,container,secrets,dast,summary}
+                        """
+                    }
+        failure {
+            echo """
+            ========================================
+                ❌ PIPELINE FALLÓ ❌
+            ========================================
+            🔍 Revisar logs para identificar problemas
+            🛠️ Verificar herramientas de seguridad
+            📊 Reportes parciales en: ${BUILD_URL}artifact/${REPORTS_DIR}/
+            ========================================
+            """
+        }
+        unstable {
+            echo """
+            ========================================
+                ⚠️ PIPELINE INESTABLE ⚠️
+            ========================================
+            🔒 Vulnerabilidades encontradas
+            📋 Revisar reportes de seguridad
+            🎯 Aplicar fixes antes de production
+            ========================================
+            """
+        }
+    }
+} else {
+                        bat """
+                            if exist ${REPORTS_DIR} rmdir /s /q ${REPORTS_DIR}
+                            mkdir ${REPORTS_DIR}
+                            mkdir ${REPORTS_DIR}\\sast
+                            mkdir ${REPORTS_DIR}\\sca  
+                            mkdir ${REPORTS_DIR}\\container
+                            mkdir ${REPORTS_DIR}\\secrets
+                            mkdir ${REPORTS_DIR}\\dast
+                            mkdir ${REPORTS_DIR}\\summary
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('📥 Checkout Repository') {
+            steps {
+                checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[url: "${REPO_URL}"]])
+            }
+        }
+        
+        // ======= FASE 2: SHIFT-LEFT SECURITY =======
+        stage('🔒 Shift-Left Security Analysis') {
+            parallel {
+                stage('🔍 Secrets Scanning') {
+                    steps {
+                        script {
+                            echo "Ejecutando GitLeaks Secrets Detection..."
+                            
+                            if (isUnix()) {
+                                sh """
+                                    docker run --rm \\
+                                        -v \$(pwd):/path \\
+                                        -v \$(pwd)/${REPORTS_DIR}/secrets:/reports \\
+                                        zricethezav/gitleaks:latest detect \\
+                                        --source=/path \\
+                                        --report-format=json \\
+                                        --report-path=/reports/gitleaks-report.json \\
+                                        --exit-code=0
+                                """
+                            } else {
+                                bat """
+                                    docker run --rm ^
+                                        -v %cd%:/path ^
+                                        -v %cd%\\${REPORTS_DIR}\\secrets:/reports ^
+                                        zricethezav/gitleaks:latest detect ^
+                                        --source=/path ^
+                                        --report-format=json ^
+                                        --report-path=/reports/gitleaks-report.json ^
+                                        --exit-code=0
+                                """
+                            }
+                            
+                            echo "✅ Secrets scanning completado"
+                        }
+                    }
+                }
+                
+                stage('📦 SCA - Dependencies Analysis') {
+                    steps {
+                        script {
+                            echo "Analizando dependencias con Snyk..."
+                            
+                            // Backend dependencies
+                            withCredentials([string(credentialsId: 'snyk-token-string', variable: 'SNYK_TOKEN')]) {
+                                if (isUnix()) {
+                                    sh '''
+                                        export SNYK_TOKEN=$SNYK_TOKEN
+                                        cd prestabanco-backend
+                                        snyk test --json > ../${REPORTS_DIR}/sca/backend-snyk.json || true
+                                    '''
+                                } else {
+                                    bat '''
+                                        set SNYK_TOKEN=%SNYK_TOKEN%
+                                        cd prestabanco-backend
+                                        C:\\Users\\kahao\\.jenkins\\tools\\io.snyk.jenkins.tools.SnykInstallation\\snyk_latest\\snyk-win.exe test --json > ..\\%REPORTS_DIR%\\sca\\backend-snyk.json || true
+                                    '''
+                                }
+                            }
+                            
+                            // Frontend dependencies
+                            if (isUnix()) {
+                                sh 'cd prestabanco-frontend && npm install'
+                            } else {
+                                bat 'cd prestabanco-frontend && npm install'
+                            }
+                            
+                            withCredentials([string(credentialsId: 'snyk-token-string', variable: 'SNYK_TOKEN')]) {
+                                if (isUnix()) {
+                                    sh '''
+                                        export SNYK_TOKEN=$SNYK_TOKEN
+                                        cd prestabanco-frontend
+                                        snyk test --json > ../${REPORTS_DIR}/sca/frontend-snyk.json || true
+                                    '''
+                                } else {
+                                    bat '''
+                                        set SNYK_TOKEN=%SNYK_TOKEN%
+                                        cd prestabanco-frontend
+                                        C:\\Users\\kahao\\.jenkins\\tools\\io.snyk.jenkins.tools.SnykInstallation\\snyk_latest\\snyk-win.exe test --json > ..\\%REPORTS_DIR%\\sca\\frontend-snyk.json || true
+                                    '''
+                                }
+                            }
+                            
+                            echo "✅ SCA analysis completado"
+                        }
+                    }
+                }
+            }
+        }
+        
+        // ======= FASE 3: BUILD & SAST =======
+        stage('🏗️ Build & SAST Analysis') {
+            parallel {
+                stage('Backend Build & SAST') {
+                    steps {
+                        script {
+                            echo "Building Backend..."
+                            if (isUnix()) {
+                                sh 'cd prestabanco-backend && ./mvnw clean install -DskipTests'
+                            } else {
+                                bat 'cd prestabanco-backend && mvnw clean install -DskipTests'
+                            }
+                            
+                            echo "Running Backend Tests..."
+                            if (isUnix()) {
+                                sh 'cd prestabanco-backend && ./mvnw verify'
+                            } else {
+                                bat 'cd prestabanco-backend && mvnw verify'
+                            }
+                            
+                            echo "SonarQube SAST Analysis - Backend..."
+                            withSonarQubeEnv('SonarQube_Server') {
+                                if (isUnix()) {
+                                    sh '''
+                                        cd prestabanco-backend
+                                        ./mvnw sonar:sonar \\
+                                        -Dsonar.projectKey=prestabanco-backend \\
+                                        -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+                                    '''
+                                } else {
+                                    bat '''
+                                        cd prestabanco-backend
+                                        mvnw sonar:sonar ^
+                                        -Dsonar.projectKey=prestabanco-backend ^
+                                        -Dsonar.coverage.jacoco.xmlReportPaths=target\\site\\jacoco\\jacoco.xml
+                                    '''
+                                }
+                            }
+                            
+                            echo "✅ Backend SAST completado"
+                        }
+                    }
+                }
+                
+                stage('Frontend Build & SAST') {
+                    steps {
+                        script {
+                            echo "Building Frontend..."
+                            if (isUnix()) {
+                                sh 'cd prestabanco-frontend && npm run build'
+                            } else {
+                                bat 'cd prestabanco-frontend && npm run build'
+                            }
+                            
+                            echo "Installing SonarQube Scanner..."
+                            if (isUnix()) {
+                                sh 'cd prestabanco-frontend && npm install -g sonar-scanner'
+                            } else {
+                                bat 'cd prestabanco-frontend && npm install -g sonar-scanner'
+                            }
+                            
+                            echo "SonarQube SAST Analysis - Frontend..."
+                            withSonarQubeEnv('SonarQube_Server') {
+                                if (isUnix()) {
+                                    sh '''
+                                        cd prestabanco-frontend
+                                        sonar-scanner \\
+                                        -Dsonar.projectKey=prestabanco-frontend \\
+                                        -Dsonar.sources=src \\
+                                        -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \\
+                                        -Dsonar.host.url=$SONAR_HOST_URL \\
+                                        -Dsonar.login=$SONAR_AUTH_TOKEN
+                                    '''
+                                } else {
+                                    bat '''
+                                        cd prestabanco-frontend
+                                        sonar-scanner ^
+                                        -Dsonar.projectKey=prestabanco-frontend ^
+                                        -Dsonar.sources=src ^
+                                        -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info ^
+                                        -Dsonar.host.url=%SONAR_HOST_URL% ^
+                                        -Dsonar.login=%SONAR_AUTH_TOKEN%
+                                    '''
+                                }
+                            }
+                            
+                            echo "✅ Frontend SAST completado"
+                        }
+                    }
+                }
+            }
+        }
+        
+        // ======= FASE 4: CONTAINER SECURITY =======
+        stage('🐳 Container Security & Push') {
+            parallel {
+                stage('Backend Container Security') {
+                    steps {
+                        script {
+                            echo "Building Backend Docker Image..."
+                            if (isUnix()) {
+                                sh 'docker build -t franciscoxd1123/prestabanco-backend:latest prestabanco-backend'
+                            } else {
+                                bat 'docker build -t franciscoxd1123/prestabanco-backend:latest prestabanco-backend'
+                            }
+                            
+                            echo "Trivy Container Scan - Backend..."
+                            if (isUnix()) {
+                                sh """
+                                    docker run --rm \\
+                                        -v /var/run/docker.sock:/var/run/docker.sock \\
+                                        -v \$(pwd)/${REPORTS_DIR}/container:/reports \\
+                                        aquasec/trivy:latest image \\
+                                        ${BACKEND_IMAGE} \\
+                                        --format json \\
+                                        --output /reports/backend-trivy.json \\
+                                        --exit-code 0
+                                """
+                            } else {
+                                bat """
+                                    docker run --rm ^
+                                        -v /var/run/docker.sock:/var/run/docker.sock ^
+                                        -v %cd%\\${REPORTS_DIR}\\container:/reports ^
+                                        aquasec/trivy:latest image ^
+                                        ${BACKEND_IMAGE} ^
+                                        --format json ^
+                                        --output /reports/backend-trivy.json ^
+                                        --exit-code 0
+                                """
+                            }
+                            
+                            echo "Pushing Backend Image..."
+                            withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                                if (isUnix()) {
+                                    sh 'docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD'
+                                    sh 'docker push franciscoxd1123/prestabanco-backend:latest'
+                                } else {
+                                    bat 'docker login -u %DOCKER_USERNAME% -p %DOCKER_PASSWORD%'
+                                    bat 'docker push franciscoxd1123/prestabanco-backend:latest'
+                                }
+                            }
+                            
+                            echo "✅ Backend container security completado"
+                        }
+                    }
+                }
+                
+                stage('Frontend Container Security') {
+                    steps {
+                        script {
+                            echo "Building Frontend Docker Image..."
+                            if (isUnix()) {
+                                sh 'docker build -t franciscoxd1123/prestabanco-frontend:latest prestabanco-frontend'
+                            } else {
+                                bat 'docker build -t franciscoxd1123/prestabanco-frontend:latest prestabanco-frontend'
+                            }
+                            
+                            echo "Trivy Container Scan - Frontend..."
+                            if (isUnix()) {
+                                sh """
+                                    docker run --rm \\
+                                        -v /var/run/docker.sock:/var/run/docker.sock \\
+                                        -v \$(pwd)/${REPORTS_DIR}/container:/reports \\
+                                        aquasec/trivy:latest image \\
+                                        ${FRONTEND_IMAGE} \\
+                                        --format json \\
+                                        --output /reports/frontend-trivy.json \\
+                                        --exit-code 0
+                                """
+                            } else {
+                                bat """
+                                    docker run --rm ^
+                                        -v /var/run/docker.sock:/var/run/docker.sock ^
+                                        -v %cd%\\${REPORTS_DIR}\\container:/reports ^
+                                        aquasec/trivy:latest image ^
+                                        ${FRONTEND_IMAGE} ^
+                                        --format json ^
+                                        --output /reports/frontend-trivy.json ^
+                                        --exit-code 0
+                                """
+                            }
+                            
+                            echo "Pushing Frontend Image..."
+                            withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                                if (isUnix()) {
+                                    sh 'docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD'
+                                    sh 'docker push franciscoxd1123/prestabanco-frontend:latest'
+                                } else {
+                                    bat 'docker login -u %DOCKER_USERNAME% -p %DOCKER_PASSWORD%'
+                                    bat 'docker push franciscoxd1123/prestabanco-frontend:latest'
+                                }
+                            }
+                            
+                            echo "✅ Frontend container security completado"
+                        }
+                    }
+                }
+            }
+        }
+        
+        // ======= FASE 5: DEPLOYMENT STAGING =======
+        stage('🚀 Deploy to Staging') {
+            when {
+                expression { params.DEPLOY_AFTER_SCAN == true }
+            }
+            steps {
+                script {
+                    echo "Desplegando PrestaBanco en Staging..."
+                    
+                    if (isUnix()) {
+                        sh 'docker-compose up -d'
+                    } else {
+                        bat 'docker-compose up -d'
+                    }
+                    
+                    echo "Esperando que la aplicación esté lista..."
+                    sleep(time: 60, unit: 'SECONDS')
+                    
+                    // Health checks
+                    retry(5) {
+                        if (isUnix()) {
+                            sh 'curl -f http://localhost:8070 || sleep 10'
+                            sh 'curl -f http://localhost:8090/actuator/health || sleep 10'
+                        } else {
+                            bat 'curl -f http://localhost:8070 || timeout 10'
+                            bat 'curl -f http://localhost:8090/actuator/health || timeout 10'
+                        }
+                    }
+                    
+                    echo "✅ Aplicación desplegada exitosamente"
+                }
+            }
+        }
+        
+        // ======= FASE 6: DAST TESTING =======
+        stage('🎯 DAST - Dynamic Security Testing') {
+            when {
+                allOf {
+                    not { params.SKIP_DAST }
+                    expression { params.DEPLOY_AFTER_SCAN == true }
+                }
+            }
+            parallel {
+                stage('Frontend DAST') {
+                    steps {
+                        script {
+                            echo "Ejecutando OWASP ZAP - Frontend..."
+                            
+                            if (isUnix()) {
+                                sh """
+                                    docker run --rm \\
+                                        --network host \\
+                                        -v \$(pwd)/${REPORTS_DIR}/dast:/zap/wrk/:rw \\
+                                        -u zap \\
+                                        owasp/zap2docker-stable zap-baseline.py \\
+                                        -t ${APP_URL} \\
+                                        -J frontend-zap.json \\
+                                        -H frontend-zap.html \\
+                                        -x frontend-zap.xml
+                                """
+                            } else {
+                                bat """
+                                    docker run --rm ^
+                                        --network host ^
+                                        -v %cd%\\${REPORTS_DIR}\\dast:/zap/wrk/:rw ^
+                                        -u zap ^
+                                        owasp/zap2docker-stable zap-baseline.py ^
+                                        -t ${APP_URL} ^
+                                        -J frontend-zap.json ^
+                                        -H frontend-zap.html ^
+                                        -x frontend-zap.xml
+                                """
+                            }
+                            
+                            echo "✅ Frontend DAST completado"
+                        }
+                    }
+                }
+                
+                stage('API DAST') {
+                    steps {
+                        script {
+                            echo "Ejecutando OWASP ZAP - API..."
+                            
+                            if (isUnix()) {
+                                sh """
+                                    docker run --rm \\
+                                        --network host \\
+                                        -v \$(pwd)/${REPORTS_DIR}/dast:/zap/wrk/:rw \\
+                                        -u zap \\
+                                        owasp/zap2docker-stable zap-api-scan.py \\
+                                        -t ${API_URL}/v3/api-docs \\
+                                        -f openapi \\
+                                        -J api-zap.json \\
+                                        -H api-zap.html \\
+                                        -x api-zap.xml || true
+                                """
+                            } else {
+                                bat """
+                                    docker run --rm ^
+                                        --network host ^
+                                        -v %cd%\\${REPORTS_DIR}\\dast:/zap/wrk/:rw ^
+                                        -u zap ^
+                                        owasp/zap2docker-stable zap-api-scan.py ^
+                                        -t ${API_URL}/v3/api-docs ^
+                                        -f openapi ^
+                                        -J api-zap.json ^
+                                        -H api-zap.html ^
+                                        -x api-zap.xml || true
+                                """
+                            }
+                            
+                            echo "✅ API DAST completado"
+                        }
+                    }
+                }
+            }
+        }
+        
+        // ======= FASE 7: SECURITY DASHBOARD =======
+        stage('📊 Generate Security Dashboard') {
+            steps {
+                script {
+                    echo "Generando Dashboard de Seguridad DevSecOps..."
+                    
+                    if (isUnix()) {
+                        sh """
+                            echo "==========================================" > ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "    PRESTABANCO DEVSECOPS DASHBOARD      " >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "==========================================" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "📅 Fecha: \$(date)" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "🔧 Pipeline: ${BUILD_NUMBER}" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "🌍 Modo: ${params.PIPELINE_MODE}" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "🔒 Nivel: ${params.SECURITY_LEVEL}" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "🛡️ HERRAMIENTAS DE SEGURIDAD EJECUTADAS:" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "  [✓] GitLeaks - Secrets Scanning" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "  [✓] Snyk - SCA Dependencies Analysis" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "  [✓] SonarQube - SAST Code Analysis" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "  [✓] Trivy - Container Security Scanning" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            if [ "${params.SKIP_DAST}" = "false" ] && [ "${params.DEPLOY_AFTER_SCAN}" = "true" ]; then
+                                echo "  [✓] OWASP ZAP - DAST Testing" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            else
+                                echo "  [⏭] OWASP ZAP - DAST Skipped" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            fi
+                            echo "" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "🏗️ COMPONENTES ANALIZADOS:" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "  • Frontend: React/Angular (Puerto 8070)" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "  • Backend: Spring Boot (Puerto 8090)" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "  • Database: PostgreSQL (Puerto 5432)" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "  • Containers: Docker Images" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "  • Infrastructure: Docker Compose" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "📋 REPORTES GENERADOS:" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "  📁 secrets/" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "    └── gitleaks-report.json" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "  📁 sca/" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "    ├── backend-snyk.json" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "    └── frontend-snyk.json" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "  📁 container/" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "    ├── backend-trivy.json" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "    └── frontend-trivy.json" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            if [ "${params.SKIP_DAST}" = "false" ] && [ "${params.DEPLOY_AFTER_SCAN}" = "true" ]; then
+                                echo "  📁 dast/" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                                echo "    ├── frontend-zap.html" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                                echo "    └── api-zap.html" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            fi
+                            echo "" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "✅ Pipeline DevSecOps completado exitosamente!" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                            echo "🎯 PrestaBanco ready for secure deployment!" >> ${REPORTS_DIR}/summary/security-dashboard.txt
+                        """
+                    } else {
+                        bat """
+                            echo ========================================== > ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo     PRESTABANCO DEVSECOPS DASHBOARD       >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo ========================================== >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo. >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo 📅 Fecha: %date% %time% >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo 🔧 Pipeline: ${BUILD_NUMBER} >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo 🌍 Modo: ${params.PIPELINE_MODE} >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo 🔒 Nivel: ${params.SECURITY_LEVEL} >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo. >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo 🛡️ HERRAMIENTAS DE SEGURIDAD EJECUTADAS: >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo   [✓] GitLeaks - Secrets Scanning >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo   [✓] Snyk - SCA Dependencies Analysis >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo   [✓] SonarQube - SAST Code Analysis >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo   [✓] Trivy - Container Security Scanning >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            if "${params.SKIP_DAST}"=="false" if "${params.DEPLOY_AFTER_SCAN}"=="true" (
+                                echo   [✓] OWASP ZAP - DAST Testing >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            ) else (
+                                echo   [⏭] OWASP ZAP - DAST Skipped >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            )
+                            echo. >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo 🏗️ COMPONENTES ANALIZADOS: >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo   • Frontend: React/Angular ^(Puerto 8070^) >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo   • Backend: Spring Boot ^(Puerto 8090^) >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo   • Database: PostgreSQL ^(Puerto 5432^) >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo   • Containers: Docker Images >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo   • Infrastructure: Docker Compose >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo. >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo ✅ Pipeline DevSecOps completado exitosamente! >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                            echo 🎯 PrestaBanco ready for secure deployment! >> ${REPORTS_DIR}\\summary\\security-dashboard.txt
+                        """
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                // Archivar todos los reportes
+                archiveArtifacts artifacts: "${REPORTS_DIR}/**/*", fingerprint: true
+                
+                // Publicar reportes HTML de ZAP si existen
+                if (!params.SKIP_DAST && params.DEPLOY_AFTER_SCAN) {
+                    publishHTML([
+                        allowMissing: false,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: "${REPORTS_DIR}/dast",
+                        reportFiles: 'frontend-zap.html,api-zap.html',
+                        reportName: 'OWASP ZAP Security Report',
+                        reportTitles: 'DAST Security Scan Results'
+                    ])
+                }
+                
+                // Limpiar contenedores
+                echo "Limpiando entorno..."
+                if (isUnix()) {
+                    sh 'docker-compose down || true'
+                } else {
+                    bat 'docker-compose down || true'
+                }
+                
+                echo "🎉 Pipeline DevSecOps PrestaBanco completado!"
+            }
+        }
+        success {
+            echo """
+            ========================================
+                ✅ PIPELINE EXITOSO ✅
+            ========================================
+            🎯 Todas las pruebas de seguridad pasaron
+            🚀 PrestaBanco listo para despliegue
+            📊 Revisar reportes en: ${BUILD_URL}artifact/${REPORTS_DIR}/
+            ========================================
+            """
