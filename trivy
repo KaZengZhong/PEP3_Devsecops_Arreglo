@@ -49,16 +49,19 @@ pipeline {
                                     --exit-code 0
                             """
                             
-                            // Table scan (sin redirección problemática)
+                            // Table scan con configuración para terminal simple
                             bat """
                                 docker run --rm ^
                                     -v /var/run/docker.sock:/var/run/docker.sock ^
                                     -v %cd%\\${REPORTS_DIR}:/reports ^
+                                    -e TERM=dumb ^
+                                    -e NO_COLOR=1 ^
                                     aquasec/trivy:latest image ^
                                     ${FRONTEND_IMAGE} ^
                                     --format table ^
                                     --severity ${severity} ^
                                     --no-progress ^
+                                    --quiet ^
                                     --output /reports/frontend-table.txt ^
                                     --exit-code 0
                             """
@@ -88,16 +91,19 @@ pipeline {
                                     --exit-code 0
                             """
                             
-                            // Table scan (sin redirección problemática)
+                            // Table scan con configuración para terminal simple
                             bat """
                                 docker run --rm ^
                                     -v /var/run/docker.sock:/var/run/docker.sock ^
                                     -v %cd%\\${REPORTS_DIR}:/reports ^
+                                    -e TERM=dumb ^
+                                    -e NO_COLOR=1 ^
                                     aquasec/trivy:latest image ^
                                     ${BACKEND_IMAGE} ^
                                     --format table ^
                                     --severity ${severity} ^
                                     --no-progress ^
+                                    --quiet ^
                                     --output /reports/backend-table.txt ^
                                     --exit-code 0
                             """
