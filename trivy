@@ -22,7 +22,11 @@ pipeline {
                     echo "Iniciando pipeline de seguridad con Trivy"
                     echo "Tipo de escaneo: ${params.SCAN_TYPE}"
                     
-                    bat "if not exist ${REPORTS_DIR} mkdir ${REPORTS_DIR}"
+                    // Limpiar reportes anteriores
+                    bat """
+                        if exist ${REPORTS_DIR} rmdir /s /q ${REPORTS_DIR}
+                        mkdir ${REPORTS_DIR}
+                    """
                 }
             }
         }
