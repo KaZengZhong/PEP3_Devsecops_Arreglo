@@ -15,344 +15,204 @@ pipeline {
     }
     
     environment {
-        REPORTS_DIR = 'prestabanco-dast-reports'
+        REPORTS_DIR = 'security-reports'
         FRONTEND_URL = 'http://localhost:8070'
         BACKEND_URL = 'http://localhost:8090'
-        BACKEND_API_URL = 'http://localhost:8090/api'
         BACKEND_HEALTH_URL = 'http://localhost:8090/actuator/health'
         POSTGRES_HOST = 'localhost'
         POSTGRES_PORT = '5433'
     }
     
     stages {
-        stage('Initialize Full DAST Pipeline') {
+        stage('Initialize DAST Pipeline') {
             steps {
                 script {
-                    echo "=== PRESTABANCO FULL STACK DAST SECURITY PIPELINE ==="
-                    echo "Frontend Target: ${FRONTEND_URL}"
-                    echo "Backend Root: ${BACKEND_URL}"
-                    echo "Backend API: ${BACKEND_API_URL}"
-                    echo "Backend Health: ${BACKEND_HEALTH_URL}"
-                    echo "Database Target: ${POSTGRES_HOST}:${POSTGRES_PORT}"
-                    echo "Scan Depth: ${params.SCAN_DEPTH}"
-                    echo "Database Scan: ${params.SCAN_DATABASE}"
+                    echo "=== PRESTABANCO SECURITY SCAN ==="
+                    echo "Frontend: ${FRONTEND_URL}"
+                    echo "Backend: ${BACKEND_URL}"
+                    echo "Database: ${POSTGRES_HOST}:${POSTGRES_PORT}"
                     
+                    // Solo crear carpeta principal
                     bat """
                         if exist ${REPORTS_DIR} rmdir /s /q ${REPORTS_DIR}
                         mkdir ${REPORTS_DIR}
-                        mkdir ${REPORTS_DIR}\\frontend
-                        mkdir ${REPORTS_DIR}\\backend
-                        mkdir ${REPORTS_DIR}\\database
-                        mkdir ${REPORTS_DIR}\\summary
                     """
                 }
             }
         }
         
-        stage('Deploy PrestaBanco Full Stack') {
+        stage('Deploy Services') {
             steps {
                 script {
-                    try {
-                        echo "Desplegando stack completo de PrestaBanco..."
-                        bat 'docker-compose -f compose2.yml down || echo "No containers to stop"'
-                        bat 'docker-compose -f compose2.yml up -d'
-                        
-                        echo "Esperando inicialización de Spring Boot..."
-                        sleep(time: 120, unit: 'SECONDS')
-                        
-                    } catch (Exception e) {
-                        echo "Warning: Could not deploy with Docker Compose. Error: ${e.message}"
-                        error("Docker Compose deployment failed")
-                    }
+                    echo "Desplegando servicios..."
+                    bat 'docker-compose -f compose2.yml down || echo "No containers to stop"'
+                    bat 'docker-compose -f compose2.yml up -d'
+                    
+                    echo "Esperando inicialización..."
+                    sleep(time: 90, unit: 'SECONDS')
                 }
             }
         }
         
-        stage('Verify All Services') {
+        stage('Verify Services') {
             steps {
                 script {
-                    echo "=== VERIFICANDO SERVICIOS CON ENDPOINTS CORRECTOS ==="
+                    echo "Verificando servicios..."
                     
                     def frontendOk = false
                     def backendOk = false
                     def dbOk = false
                     
-                    // Verificar contenedores
-                    bat 'docker ps --format "table {{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}"'
-                    
-                    // Verificar Frontend
-                    echo "1. Verificando Frontend..."
-                    for (int i = 0; i < 3; i++) {
-                        try {
-                            bat 'powershell -Command "try { $r = Invoke-WebRequest -Uri http://localhost:8070 -TimeoutSec 10 -UseBasicParsing; Write-Host \\"Frontend OK - Status: $($r.StatusCode)\\"; exit 0 } catch { Write-Host \\"Frontend Error: $($_.Exception.Message)\\"; exit 1 }"'
-                            echo "✅ Frontend accesible en puerto 8070"
-                            frontendOk = true
-                            break
-                        } catch (Exception e) {
-                            echo "⚠️ Frontend intento ${i+1}/3: ${e.message}"
-                            if (i < 2) sleep(time: 30, unit: 'SECONDS')
-                        }
+                    // Frontend
+                    try {
+                        bat 'powershell -Command "Invoke-WebRequest -Uri http://localhost:8070 -TimeoutSec 10 -UseBasicParsing | Out-Null"'
+                        frontendOk = true
+                        echo "✅ Frontend OK"
+                    } catch (Exception e) {
+                        echo "❌ Frontend: ${e.message}"
                     }
                     
-                    // Verificar Backend con endpoints permitidos
-                    echo "2. Verificando Backend (usando endpoints públicos)..."
-                    
-                    // Probar actuator/health primero
-                    for (int i = 0; i < 3; i++) {
+                    // Backend (usando health endpoint)
+                    try {
+                        bat 'powershell -Command "Invoke-WebRequest -Uri http://localhost:8090/actuator/health -TimeoutSec 10 -UseBasicParsing | Out-Null"'
+                        backendOk = true
+                        echo "✅ Backend OK"
+                    } catch (Exception e) {
+                        echo "⚠️ Backend health failed, probando root..."
                         try {
-                            bat '''
-                                powershell -Command "
+                            // Si health falla, probar root (403 es OK)
+                            bat '''powershell -Command "
                                 try { 
-                                    Write-Host 'Probando actuator/health...'
-                                    $response = Invoke-WebRequest -Uri http://localhost:8090/actuator/health -TimeoutSec 10 -UseBasicParsing
-                                    Write-Host \"Backend Health OK - Status: $($response.StatusCode)\"
-                                    Write-Host \"Response: $($response.Content)\"
-                                    exit 0
+                                    Invoke-WebRequest -Uri http://localhost:8090 -TimeoutSec 10 -UseBasicParsing
                                 } catch { 
-                                    Write-Host \"Health endpoint error: $($_.Exception.Message)\"
-                                    exit 1
-                                }"
-                            '''
-                            echo "✅ Backend Health endpoint accesible"
-                            backendOk = true
-                            break
-                        } catch (Exception e) {
-                            echo "⚠️ Backend Health intento ${i+1}/3: ${e.message}"
-                            if (i < 2) sleep(time: 30, unit: 'SECONDS')
-                        }
-                    }
-                    
-                    // Si health falla, probar endpoint API genérico
-                    if (!backendOk) {
-                        echo "3. Probando endpoint API genérico..."
-                        for (int i = 0; i < 3; i++) {
-                            try {
-                                bat '''
-                                    powershell -Command "
-                                    try { 
-                                        Write-Host 'Probando /api endpoint...'
-                                        $response = Invoke-WebRequest -Uri http://localhost:8090/api -TimeoutSec 10 -UseBasicParsing
-                                        Write-Host \"Backend API OK - Status: $($response.StatusCode)\"
+                                    if ($_.Exception.Response.StatusCode.value__ -eq 403) {
+                                        Write-Host 'Backend OK (403 expected)'
                                         exit 0
-                                    } catch { 
-                                        $statusCode = $_.Exception.Response.StatusCode.value__
-                                        Write-Host \"API Status Code: $statusCode\"
-                                        if ($statusCode -eq 404) {
-                                            Write-Host 'Backend responding - 404 is OK (no specific API endpoint)'
-                                            exit 0
-                                        } else {
-                                            Write-Host \"API Error: $($_.Exception.Message)\"
-                                            exit 1
-                                        }
-                                    }"
-                                '''
-                                echo "✅ Backend API endpoint respondiendo"
-                                backendOk = true
-                                break
-                            } catch (Exception e) {
-                                echo "⚠️ Backend API intento ${i+1}/3: ${e.message}"
-                                if (i < 2) sleep(time: 30, unit: 'SECONDS')
-                            }
+                                    } else { exit 1 }
+                                }"'''
+                            backendOk = true
+                            echo "✅ Backend OK (Spring Security active)"
+                        } catch (Exception e2) {
+                            echo "❌ Backend: ${e2.message}"
                         }
                     }
                     
-                    // Verificar Database
-                    echo "4. Verificando Database..."
+                    // Database
                     try {
                         bat 'powershell -Command "Test-NetConnection -ComputerName localhost -Port 5433 -WarningAction SilentlyContinue"'
-                        echo "✅ Database puerto accesible"
                         dbOk = true
+                        echo "✅ Database OK"
                     } catch (Exception e) {
-                        echo "⚠️ Database: ${e.message}"
+                        echo "❌ Database: ${e.message}"
                     }
                     
-                    // Generar reporte de conectividad
-                    bat """
-                        echo === PRESTABANCO SERVICES CONNECTIVITY === > ${REPORTS_DIR}\\connectivity-report.txt
-                        echo Date: %date% %time% >> ${REPORTS_DIR}\\connectivity-report.txt
-                        echo. >> ${REPORTS_DIR}\\connectivity-report.txt
-                        echo SERVICES STATUS: >> ${REPORTS_DIR}\\connectivity-report.txt
-                        echo Frontend (8070): ${frontendOk ? 'ACCESSIBLE' : 'NOT ACCESSIBLE'} >> ${REPORTS_DIR}\\connectivity-report.txt
-                        echo Backend Health (/actuator/health): ${backendOk ? 'ACCESSIBLE' : 'NOT ACCESSIBLE'} >> ${REPORTS_DIR}\\connectivity-report.txt
-                        echo Backend Root (/): Expected 403 (Spring Security) >> ${REPORTS_DIR}\\connectivity-report.txt
-                        echo Database (5433): ${dbOk ? 'ACCESSIBLE' : 'NOT ACCESSIBLE'} >> ${REPORTS_DIR}\\connectivity-report.txt
-                        echo. >> ${REPORTS_DIR}\\connectivity-report.txt
-                        echo DOCKER CONTAINERS: >> ${REPORTS_DIR}\\connectivity-report.txt
-                    """
-                    
-                    try {
-                        bat 'docker ps --format "{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}" >> %cd%\\' + "${REPORTS_DIR}\\connectivity-report.txt"
-                    } catch (Exception e) {
-                        bat 'echo "Could not get docker info" >> ' + "${REPORTS_DIR}\\connectivity-report.txt"
-                    }
-                    
-                    // Guardar estado para siguientes etapas
-                    env.FRONTEND_AVAILABLE = frontendOk.toString()
-                    env.BACKEND_AVAILABLE = backendOk.toString()
-                    env.DATABASE_AVAILABLE = dbOk.toString()
-                    
-                    echo """
-                    === RESULTADO VERIFICACIÓN ===
-                    Frontend: ${frontendOk ? '✅ OK' : '❌ FAIL'}
-                    Backend:  ${backendOk ? '✅ OK' : '❌ FAIL'}
-                    Database: ${dbOk ? '✅ OK' : '❌ FAIL'}
-                    """
+                    env.FRONTEND_OK = frontendOk.toString()
+                    env.BACKEND_OK = backendOk.toString()
+                    env.DATABASE_OK = dbOk.toString()
                 }
             }
         }
         
-        stage('DAST Scan - Frontend Application') {
-            when {
-                expression { env.FRONTEND_AVAILABLE == 'true' }
-            }
+        stage('Security Scan - Frontend') {
+            when { expression { env.FRONTEND_OK == 'true' } }
             steps {
                 script {
-                    echo "=== ESCANEANDO FRONTEND WEB APPLICATION ==="
-                    
+                    echo "🔍 Escaneando Frontend..."
                     try {
-                        timeout(time: 30, unit: 'MINUTES') {
-                            bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}\\frontend:/zap/wrk\" zaproxy/zap-stable zap-baseline.py -t ${FRONTEND_URL} -J frontend-security.json -r frontend-security.xml -d"
+                        timeout(time: 20, unit: 'MINUTES') {
+                            bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}:/zap/wrk\" zaproxy/zap-stable zap-baseline.py -t ${FRONTEND_URL} -J frontend-scan.json -r frontend-scan.html -d"
                         }
-                        
-                        echo "✅ Frontend security scan completado exitosamente"
-                        
+                        echo "✅ Frontend scan completado"
                     } catch (Exception e) {
                         echo "⚠️ Frontend scan: ${e.message}"
                         currentBuild.result = 'UNSTABLE'
-                        
-                        bat """
-                            echo FRONTEND DAST SECURITY SCAN > ${REPORTS_DIR}\\frontend\\frontend-analysis.txt
-                            echo ========================== >> ${REPORTS_DIR}\\frontend\\frontend-analysis.txt
-                            echo Date: %date% %time% >> ${REPORTS_DIR}\\frontend\\frontend-analysis.txt
-                            echo Target: ${FRONTEND_URL} >> ${REPORTS_DIR}\\frontend\\frontend-analysis.txt
-                            echo Status: SCAN ATTEMPTED >> ${REPORTS_DIR}\\frontend\\frontend-analysis.txt
-                            echo Details: ${e.message} >> ${REPORTS_DIR}\\frontend\\frontend-analysis.txt
-                        """
                     }
                 }
             }
         }
         
-        stage('DAST Scan - Backend API') {
-            when {
-                expression { env.BACKEND_AVAILABLE == 'true' }
-            }
+        stage('Security Scan - Backend') {
+            when { expression { env.BACKEND_OK == 'true' } }
             steps {
                 script {
-                    echo "=== ESCANEANDO BACKEND API REST ==="
-                    echo "Escaneando tanto rutas públicas como protegidas..."
-                    
+                    echo "🔍 Escaneando Backend..."
                     try {
-                        // Escanear el backend completo (ZAP intentará múltiples rutas)
-                        timeout(time: 30, unit: 'MINUTES') {
-                            bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}\\backend:/zap/wrk\" zaproxy/zap-stable zap-baseline.py -t ${BACKEND_URL} -J backend-security.json -r backend-security.xml -d"
+                        timeout(time: 20, unit: 'MINUTES') {
+                            bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}:/zap/wrk\" zaproxy/zap-stable zap-baseline.py -t ${BACKEND_URL} -J backend-scan.json -r backend-scan.html -d"
                         }
-                        
-                        echo "✅ Backend security scan completado exitosamente"
-                        
-                        // Scan adicional específico para API
-                        echo "Realizando scan específico de API endpoints..."
-                        try {
-                            timeout(time: 20, unit: 'MINUTES') {
-                                bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}\\backend:/zap/wrk\" zaproxy/zap-stable zap-baseline.py -t ${BACKEND_API_URL} -J backend-api-security.json -r backend-api-security.xml -d"
-                            }
-                            echo "✅ Backend API scan específico completado"
-                        } catch (Exception apiE) {
-                            echo "⚠️ API specific scan: ${apiE.message}"
-                        }
-                        
+                        echo "✅ Backend scan completado"
                     } catch (Exception e) {
                         echo "⚠️ Backend scan: ${e.message}"
                         currentBuild.result = 'UNSTABLE'
-                        
-                        bat """
-                            echo BACKEND API DAST SECURITY SCAN > ${REPORTS_DIR}\\backend\\backend-analysis.txt
-                            echo ============================= >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
-                            echo Date: %date% %time% >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
-                            echo Target Root: ${BACKEND_URL} >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
-                            echo Target API: ${BACKEND_API_URL} >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
-                            echo Status: SCAN ATTEMPTED >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
-                            echo Details: ${e.message} >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
-                            echo. >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
-                            echo Security Configuration Detected: >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
-                            echo - Spring Security enabled >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
-                            echo - Public endpoints: /api/**, /actuator/** >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
-                            echo - Protected endpoints: / (root), other paths >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
-                            echo - CORS enabled for multiple origins >> ${REPORTS_DIR}\\backend\\backend-analysis.txt
-                        """
                     }
                 }
             }
         }
         
-        stage('Database Security Scan') {
-            when {
-                expression { params.SCAN_DATABASE == true && env.DATABASE_AVAILABLE == 'true' }
+        stage('Security Scan - Database') {
+            when { 
+                allOf {
+                    expression { params.SCAN_DATABASE == true }
+                    expression { env.DATABASE_OK == 'true' }
+                }
             }
             steps {
                 script {
-                    echo "=== ESCANEANDO POSTGRESQL DATABASE ==="
-                    
+                    echo "🔍 Escaneando Database..."
                     try {
-                        timeout(time: 15, unit: 'MINUTES') {
-                            bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}\\database:/reports\" instrumentisto/nmap -sS -sV -p 5433 ${POSTGRES_HOST} -oX /reports/postgres-scan.xml -oN /reports/postgres-scan.txt"
+                        timeout(time: 10, unit: 'MINUTES') {
+                            bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}:/reports\" instrumentisto/nmap -sS -sV -p 5433 ${POSTGRES_HOST} -oN /reports/database-scan.txt"
                         }
-                        
-                        echo "✅ PostgreSQL security scan completado"
-                        
+                        echo "✅ Database scan completado"
                     } catch (Exception e) {
                         echo "⚠️ Database scan: ${e.message}"
                         currentBuild.result = 'UNSTABLE'
                     }
-                    
-                    bat """
-                        echo DATABASE SECURITY SCAN > ${REPORTS_DIR}\\database\\database-analysis.txt
-                        echo ====================== >> ${REPORTS_DIR}\\database\\database-analysis.txt
-                        echo Date: %date% %time% >> ${REPORTS_DIR}\\database\\database-analysis.txt
-                        echo Target: ${POSTGRES_HOST}:${POSTGRES_PORT} >> ${REPORTS_DIR}\\database\\database-analysis.txt
-                        echo Status: SCAN COMPLETED >> ${REPORTS_DIR}\\database\\database-analysis.txt
-                    """
                 }
             }
         }
         
-        stage('Generate Comprehensive Report') {
+        stage('Generate Summary') {
             steps {
                 script {
-                    echo "Generando reporte de seguridad completo..."
+                    echo "📋 Generando resumen..."
                     
                     bat """
-                        echo ================================================= > ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo    PRESTABANCO FULL STACK SECURITY ANALYSIS     >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo ================================================= >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo. >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo EXECUTION SUMMARY: >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   Date: %date% %time% >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   Build: ${BUILD_NUMBER} >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   Frontend Scanned: ${env.FRONTEND_AVAILABLE} >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   Backend Scanned: ${env.BACKEND_AVAILABLE} >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   Database Scanned: ${env.DATABASE_AVAILABLE} >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo. >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo BACKEND SECURITY CONFIGURATION: >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   ✅ Spring Security enabled >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   ✅ CORS configured for multiple origins >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   ✅ Public API endpoints: /api/** >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   ✅ Health endpoints: /actuator/** >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   ✅ Protected root endpoint: / >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   ✅ BCrypt password encoding >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo. >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo SCAN TARGETS: >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   Frontend: ${FRONTEND_URL} >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   Backend Root: ${BACKEND_URL} >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   Backend API: ${BACKEND_API_URL} >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   Backend Health: ${BACKEND_HEALTH_URL} >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo   Database: ${POSTGRES_HOST}:${POSTGRES_PORT} >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo. >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo ✅ FULL STACK DAST SECURITY ANALYSIS COMPLETED >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo 🎯 All available PrestaBanco components scanned >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo 🔒 Spring Security configuration analyzed >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
-                        echo 🚀 Ready for security review >> ${REPORTS_DIR}\\summary\\comprehensive-security-report.txt
+                        echo ========================================= > ${REPORTS_DIR}\\RESUMEN.txt
+                        echo    PRESTABANCO - REPORTE DE SEGURIDAD    >> ${REPORTS_DIR}\\RESUMEN.txt
+                        echo ========================================= >> ${REPORTS_DIR}\\RESUMEN.txt
+                        echo. >> ${REPORTS_DIR}\\RESUMEN.txt
+                        echo Fecha: %date% %time% >> ${REPORTS_DIR}\\RESUMEN.txt
+                        echo Build: ${BUILD_NUMBER} >> ${REPORTS_DIR}\\RESUMEN.txt
+                        echo. >> ${REPORTS_DIR}\\RESUMEN.txt
+                        echo SERVICIOS ESCANEADOS: >> ${REPORTS_DIR}\\RESUMEN.txt
+                        echo   Frontend:  ${env.FRONTEND_OK == 'true' ? 'SI' : 'NO'} >> ${REPORTS_DIR}\\RESUMEN.txt
+                        echo   Backend:   ${env.BACKEND_OK == 'true' ? 'SI' : 'NO'} >> ${REPORTS_DIR}\\RESUMEN.txt
+                        echo   Database:  ${env.DATABASE_OK == 'true' ? 'SI' : 'NO'} >> ${REPORTS_DIR}\\RESUMEN.txt
+                        echo. >> ${REPORTS_DIR}\\RESUMEN.txt
+                        echo ARCHIVOS GENERADOS: >> ${REPORTS_DIR}\\RESUMEN.txt
                     """
+                    
+                    // Listar solo archivos que existen
+                    try {
+                        bat 'if exist ' + "${REPORTS_DIR}\\frontend-scan.json" + ' echo   ✅ frontend-scan.json >> ' + "${REPORTS_DIR}\\RESUMEN.txt"
+                        bat 'if exist ' + "${REPORTS_DIR}\\frontend-scan.html" + ' echo   ✅ frontend-scan.html >> ' + "${REPORTS_DIR}\\RESUMEN.txt"
+                        bat 'if exist ' + "${REPORTS_DIR}\\backend-scan.json" + ' echo   ✅ backend-scan.json >> ' + "${REPORTS_DIR}\\RESUMEN.txt"
+                        bat 'if exist ' + "${REPORTS_DIR}\\backend-scan.html" + ' echo   ✅ backend-scan.html >> ' + "${REPORTS_DIR}\\RESUMEN.txt"
+                        bat 'if exist ' + "${REPORTS_DIR}\\database-scan.txt" + ' echo   ✅ database-scan.txt >> ' + "${REPORTS_DIR}\\RESUMEN.txt"
+                        
+                        bat """
+                            echo. >> ${REPORTS_DIR}\\RESUMEN.txt
+                            echo 📋 COMO LEER LOS REPORTES: >> ${REPORTS_DIR}\\RESUMEN.txt
+                            echo   1. Abrir frontend-scan.html en navegador >> ${REPORTS_DIR}\\RESUMEN.txt
+                            echo   2. Abrir backend-scan.html en navegador >> ${REPORTS_DIR}\\RESUMEN.txt
+                            echo   3. Revisar database-scan.txt en editor >> ${REPORTS_DIR}\\RESUMEN.txt
+                            echo. >> ${REPORTS_DIR}\\RESUMEN.txt
+                            echo ✅ SCAN COMPLETADO >> ${REPORTS_DIR}\\RESUMEN.txt
+                        """
+                    } catch (Exception e) {
+                        echo "Could not list files: ${e.message}"
+                    }
                 }
             }
         }
@@ -361,48 +221,37 @@ pipeline {
     post {
         always {
             script {
-                archiveArtifacts artifacts: "${REPORTS_DIR}/**/*", allowEmptyArchive: true
+                // Solo archivar la carpeta de reportes
+                archiveArtifacts artifacts: "${REPORTS_DIR}/**", allowEmptyArchive: true
                 
                 echo """
-                ========================================
-                    PRESTABANCO DAST ANALYSIS COMPLETED
-                ========================================
-                🎯 Services Scanned:
-                   Frontend: ${env.FRONTEND_AVAILABLE == 'true' ? '✅ SCANNED' : '❌ SKIPPED'}
-                   Backend:  ${env.BACKEND_AVAILABLE == 'true' ? '✅ SCANNED' : '❌ SKIPPED'}
-                   Database: ${env.DATABASE_AVAILABLE == 'true' ? '✅ SCANNED' : '❌ SKIPPED'}
+                ====================================
+                   PRESTABANCO SECURITY SCAN
+                ====================================
+                📊 Reportes: ${BUILD_URL}artifact/${REPORTS_DIR}/
                 
-                📊 Reports: ${BUILD_URL}artifact/${REPORTS_DIR}/
+                📁 Archivos principales:
+                   📄 RESUMEN.txt (empezar aquí)
+                   🌐 frontend-scan.html 
+                   🔧 backend-scan.html
+                   🗄️ database-scan.txt
                 
-                🔧 Backend Configuration:
-                   ✅ Spring Security: ACTIVE
-                   ✅ Public APIs: /api/**, /actuator/**
-                   ✅ Protected: / (root)
-                ========================================
+                🎯 Servicios: 
+                   Frontend: ${env.FRONTEND_OK == 'true' ? '✅' : '❌'}
+                   Backend:  ${env.BACKEND_OK == 'true' ? '✅' : '❌'}  
+                   Database: ${env.DATABASE_OK == 'true' ? '✅' : '❌'}
+                ====================================
                 """
             }
         }
         success {
-            echo "🎉 FULL STACK DAST Pipeline completado exitosamente!"
+            echo "🎉 Security scan completado exitosamente!"
         }
         unstable {
-            echo "⚠️ Pipeline completado con advertencias - revisar logs"
+            echo "⚠️ Scan completado con warnings - revisar reportes"
         }
         failure {
-            echo "❌ Pipeline falló - revisar configuración"
+            echo "❌ Scan falló - revisar logs"
         }
-    }
-}
-
-def getScanDuration(depth) {
-    switch(depth) {
-        case 'QUICK':
-            return 1
-        case 'STANDARD':
-            return 3
-        case 'COMPREHENSIVE':
-            return 5
-        default:
-            return 2
     }
 }
