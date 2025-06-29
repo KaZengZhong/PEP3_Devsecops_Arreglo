@@ -33,10 +33,20 @@ pipeline {
         stage('Deploy Services') {
             steps {
                 script {
+                    echo "Deteniendo servicios existentes..."
                     bat 'docker-compose -f compose2.yml down || echo "No containers"'
-                    bat 'docker-compose -f compose2.yml up -d'
-                    echo "Esperando servicios + ELK Stack..."
-                    sleep(time: 120, unit: 'SECONDS')
+                    
+                    echo "Iniciando servicios principales..."
+                    bat 'docker-compose -f compose2.yml up -d frontend backend postgres'
+                    sleep(time: 60, unit: 'SECONDS')
+                    
+                    echo "Iniciando Elasticsearch..."
+                    bat 'docker-compose -f compose2.yml up -d elasticsearch'
+                    sleep(time: 90, unit: 'SECONDS')
+                    
+                    echo "Iniciando Kibana, Logstash y Filebeat..."
+                    bat 'docker-compose -f compose2.yml up -d kibana logstash filebeat'
+                    sleep(time: 60, unit: 'SECONDS')
                 }
             }
         }
@@ -69,18 +79,56 @@ pipeline {
                         echo "Backend: FAILED"
                     }
                     
-                    // ELK Stack
+                    // ELK Stack - Verificación más robusta
                     try {
-                        bat 'powershell -Command "Invoke-WebRequest -Uri http://localhost:9200/_cluster/health -TimeoutSec 15 -UseBasicParsing | Out-Null"'
+                        echo "Verificando Elasticsearch..."
+                        bat 'powershell -Command "Start-Sleep 10; Invoke-WebRequest -Uri http://localhost:9200/_cluster/health -TimeoutSec 20 -UseBasicParsing | Out-Null"'
+                        
+                        echo "Verificando Kibana..."
+                        bat 'powershell -Command "Start-Sleep 5; Invoke-WebRequest -Uri http://localhost:5601/api/status -TimeoutSec 20 -UseBasicParsing | Out-Null"'
+                        
                         elkOk = true
                         echo "ELK Stack: OK"
                     } catch (Exception e) {
-                        echo "ELK Stack: FAILED o aún inicializando"
+                        echo "ELK Stack: FAILED - ${e.message}"
+                        echo "Verificando logs de contenedores ELK..."
+                        try {
+                            bat 'docker logs elasticsearch-1 --tail 10'
+                            bat 'docker logs kibana-1 --tail 10'
+                        } catch (Exception logError) {
+                            echo "No se pudieron obtener logs de ELK"
+                        }
                     }
                     
                     env.FRONTEND_OK = frontendOk.toString()
                     env.BACKEND_OK = backendOk.toString()
                     env.ELK_OK = elkOk.toString()
+                }
+            }
+        }
+        
+        stage('Generate Test Logs') {
+            when {
+                expression { env.ELK_OK == 'true' }
+            }
+            steps {
+                script {
+                    echo "Generando logs de prueba para ELK..."
+                    try {
+                        // Generar logs visitando la aplicación
+                        bat 'powershell -Command "Invoke-WebRequest -Uri http://localhost:8070 -UseBasicParsing | Out-Null"'
+                        bat 'powershell -Command "Invoke-WebRequest -Uri http://localhost:8070/home -UseBasicParsing | Out-Null"'
+                        bat 'powershell -Command "Invoke-WebRequest -Uri http://localhost:8090/actuator/health -UseBasicParsing | Out-Null"'
+                        
+                        echo "Esperando que los logs se procesen..."
+                        sleep(time: 30, unit: 'SECONDS')
+                        
+                        // Verificar si hay índices en Elasticsearch
+                        bat 'powershell -Command "Invoke-WebRequest -Uri http://localhost:9200/_cat/indices?v -UseBasicParsing"'
+                        
+                    } catch (Exception e) {
+                        echo "Warning: No se pudieron generar logs de prueba - ${e.message}"
+                    }
                 }
             }
         }
@@ -109,7 +157,7 @@ pipeline {
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                     """
                     
-                    // Frontend Scan (código original sin cambios)
+                    // Frontend Scan
                     if (env.FRONTEND_OK == 'true') {
                         echo "Escaneando Frontend..."
                         try {
@@ -142,7 +190,7 @@ pipeline {
                         """
                     }
                     
-                    // Backend Scan (código original sin cambios)  
+                    // Backend Scan
                     if (env.BACKEND_OK == 'true') {
                         echo "Escaneando Backend..."
                         try {
@@ -176,7 +224,7 @@ pipeline {
                         """
                     }
                     
-                    // Database scan (mantener lógica original)
+                    // Database scan
                     bat """
                         echo DATABASE SCAN: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo   Status: ANALISIS DE CONFIGURACION >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
@@ -193,6 +241,7 @@ pipeline {
                         echo Status: ${env.ELK_OK == 'true' ? 'ACTIVO' : 'INACTIVO'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo Kibana Dashboard: ${env.ELK_OK == 'true' ? 'http://localhost:5601' : 'NO DISPONIBLE'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo Logs de aplicacion: ${env.ELK_OK == 'true' ? 'RECOPILADOS' : 'NO DISPONIBLE'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo Indices en Elasticsearch: ${env.ELK_OK == 'true' ? 'prestabanco-YYYY.MM.DD' : 'NO DISPONIBLE'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo COMO REVISAR LOS RESULTADOS: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo ===================================== >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
@@ -200,7 +249,9 @@ pipeline {
                         echo 1. Leer este archivo REPORTE-SEGURIDAD.txt >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo 2. Abrir frontend-report.html en navegador >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo 3. Abrir backend-report.html en navegador >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 4. Ver logs en Kibana (si disponible): http://localhost:5601 >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo 4. Ver logs en Kibana: http://localhost:5601 >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo    - Ir a Analytics ^> Discover >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo    - Crear index pattern: prestabanco* >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo SCAN COMPLETADO EXITOSAMENTE >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                     """
@@ -254,8 +305,9 @@ pipeline {
                   Backend:  ${env.BACKEND_OK == 'true' ? 'SI' : 'NO'}  
                   ELK:      ${env.ELK_OK == 'true' ? 'SI' : 'NO'}
                   
-                MONITOREO:
+                MONITOREO ELK:
                   Kibana: ${env.ELK_OK == 'true' ? 'http://localhost:5601' : 'NO DISPONIBLE'}
+                  Logs: ${env.ELK_OK == 'true' ? 'Analytics > Discover > Create index pattern: prestabanco*' : 'NO DISPONIBLE'}
                 
                 NOTA: Exit code 2 es NORMAL (warnings)
                 =====================================
