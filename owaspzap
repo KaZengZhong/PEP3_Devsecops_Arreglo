@@ -7,11 +7,6 @@ pipeline {
             choices: ['QUICK', 'STANDARD', 'COMPREHENSIVE'],
             description: 'Profundidad del escaneo de seguridad'
         )
-        choice(
-            name: 'REPORT_STYLE',
-            choices: ['MODERN', 'TRADITIONAL', 'DETAILED'],
-            description: 'Estilo visual del reporte'
-        )
     }
     
     environment {
@@ -25,7 +20,6 @@ pipeline {
             steps {
                 script {
                     echo "=== PRESTABANCO SECURITY SCAN ==="
-                    echo "Report Style: ${params.REPORT_STYLE}"
                     
                     bat """
                         if exist ${REPORTS_DIR} rmdir /s /q ${REPORTS_DIR}
@@ -79,240 +73,439 @@ pipeline {
             }
         }
         
-        stage('Create Enhanced HTML Template') {
+        stage('Create Enhanced CSS') {
             steps {
                 script {
-                    echo "Creando template HTML mejorado..."
+                    echo "Creando CSS mejorado para reportes..."
                     
-                    // Crear CSS moderno para los reportes
                     bat """
-                        echo /* PRESTABANCO Security Report Styles */ > ${REPORTS_DIR}\\assets\\report-style.css
-                        echo body { >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo     margin: 0; padding: 20px; min-height: 100vh; >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo } >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo .container { >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo     max-width: 1200px; margin: 0 auto; >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo     background: white; border-radius: 15px; >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo     box-shadow: 0 20px 40px rgba(0,0,0,0.1); >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo     overflow: hidden; >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo } >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo .header { >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo     background: linear-gradient(45deg, #1e3c72, #2a5298); >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo     color: white; padding: 30px; text-align: center; >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo } >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo .status-good { color: #27ae60; font-weight: bold; } >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo .status-warning { color: #f39c12; font-weight: bold; } >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo .status-critical { color: #e74c3c; font-weight: bold; } >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo .scan-section { >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo     margin: 20px; padding: 20px; >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo     border-left: 4px solid #3498db; >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo     background: #f8f9fa; border-radius: 8px; >> ${REPORTS_DIR}\\assets\\report-style.css
-                        echo } >> ${REPORTS_DIR}\\assets\\report-style.css
-                    """
-                    
-                    // Crear header HTML mejorado
-                    bat """
-                        echo ^<!DOCTYPE html^> > ${REPORTS_DIR}\\assets\\header.html
-                        echo ^<html lang="es"^> >> ${REPORTS_DIR}\\assets\\header.html
-                        echo ^<head^> >> ${REPORTS_DIR}\\assets\\header.html
-                        echo     ^<meta charset="UTF-8"^> >> ${REPORTS_DIR}\\assets\\header.html
-                        echo     ^<meta name="viewport" content="width=device-width, initial-scale=1.0"^> >> ${REPORTS_DIR}\\assets\\header.html
-                        echo     ^<title^>PRESTABANCO Security Report^</title^> >> ${REPORTS_DIR}\\assets\\header.html
-                        echo     ^<link rel="stylesheet" href="assets/report-style.css"^> >> ${REPORTS_DIR}\\assets\\header.html
-                        echo     ^<style^> >> ${REPORTS_DIR}\\assets\\header.html
-                        echo         .summary-cards { display: flex; gap: 20px; margin: 20px; } >> ${REPORTS_DIR}\\assets\\header.html
-                        echo         .card { flex: 1; padding: 20px; border-radius: 10px; text-align: center; } >> ${REPORTS_DIR}\\assets\\header.html
-                        echo         .card-good { background: linear-gradient(45deg, #27ae60, #2ecc71); color: white; } >> ${REPORTS_DIR}\\assets\\header.html
-                        echo         .card-warning { background: linear-gradient(45deg, #f39c12, #e67e22); color: white; } >> ${REPORTS_DIR}\\assets\\header.html
-                        echo         .card-info { background: linear-gradient(45deg, #3498db, #2980b9); color: white; } >> ${REPORTS_DIR}\\assets\\header.html
-                        echo         .vulnerability-item { >> ${REPORTS_DIR}\\assets\\header.html
-                        echo             margin: 10px 0; padding: 15px; >> ${REPORTS_DIR}\\assets\\header.html
-                        echo             border-radius: 8px; border-left: 4px solid; >> ${REPORTS_DIR}\\assets\\header.html
-                        echo         } >> ${REPORTS_DIR}\\assets\\header.html
-                        echo         .vuln-high { border-color: #e74c3c; background: #fadbd8; } >> ${REPORTS_DIR}\\assets\\header.html
-                        echo         .vuln-medium { border-color: #f39c12; background: #fdeaa7; } >> ${REPORTS_DIR}\\assets\\header.html
-                        echo         .vuln-low { border-color: #27ae60; background: #d5f4e6; } >> ${REPORTS_DIR}\\assets\\header.html
-                        echo         .navigation { padding: 20px; background: #34495e; } >> ${REPORTS_DIR}\\assets\\header.html
-                        echo         .nav-button { >> ${REPORTS_DIR}\\assets\\header.html
-                        echo             display: inline-block; padding: 10px 20px; margin: 5px; >> ${REPORTS_DIR}\\assets\\header.html
-                        echo             background: #3498db; color: white; text-decoration: none; >> ${REPORTS_DIR}\\assets\\header.html
-                        echo             border-radius: 5px; transition: all 0.3s; >> ${REPORTS_DIR}\\assets\\header.html
-                        echo         } >> ${REPORTS_DIR}\\assets\\header.html
-                        echo         .nav-button:hover { background: #2980b9; transform: translateY(-2px); } >> ${REPORTS_DIR}\\assets\\header.html
-                        echo     ^</style^> >> ${REPORTS_DIR}\\assets\\header.html
-                        echo ^</head^> >> ${REPORTS_DIR}\\assets\\header.html
-                        echo ^<body^> >> ${REPORTS_DIR}\\assets\\header.html
+                        echo /* Enhanced Security Report Styles */ > ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo * { box-sizing: border-box; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo body { >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     background: linear-gradient(135deg, #667eea 0%%, #764ba2 100%%); >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     margin: 0; padding: 20px; min-height: 100vh; line-height: 1.6; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .container { >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     max-width: 1400px; margin: 0 auto; background: white; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     border-radius: 15px; box-shadow: 0 25px 50px rgba(0,0,0,0.15); >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     overflow: hidden; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .header { >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     background: linear-gradient(45deg, #1e3c72, #2a5298); >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     color: white; padding: 40px; text-align: center; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .header h1 { margin: 0; font-size: 2.5em; font-weight: 300; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .header p { margin: 10px 0 0 0; opacity: 0.9; font-size: 1.1em; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .summary-section { >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     padding: 30px; background: #f8f9fa; border-bottom: 1px solid #dee2e6; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .card { >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     background: white; padding: 25px; border-radius: 12px; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     text-align: center; box-shadow: 0 8px 25px rgba(0,0,0,0.08); >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     border-left: 5px solid; transition: transform 0.3s ease; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .card:hover { transform: translateY(-5px); } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .card-high { border-color: #dc3545; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .card-medium { border-color: #fd7e14; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .card-low { border-color: #ffc107; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .card-info { border-color: #17a2b8; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .card-safe { border-color: #28a745; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .card h3 { margin: 0 0 10px 0; font-size: 1.8em; font-weight: bold; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .card p { margin: 0; color: #6c757d; font-size: 1.1em; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .alerts-section { padding: 40px; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .alert-item { >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     background: white; margin: 25px 0; padding: 30px; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     border-radius: 12px; box-shadow: 0 5px 15px rgba(0,0,0,0.08); >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     border-left: 6px solid; position: relative; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .alert-high { border-color: #dc3545; background: #fff5f5; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .alert-medium { border-color: #fd7e14; background: #fffaf0; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .alert-low { border-color: #ffc107; background: #fffdf0; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .alert-info { border-color: #17a2b8; background: #f0fcff; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .alert-title { >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     font-size: 1.4em; font-weight: bold; margin: 0 0 15px 0; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     display: flex; align-items: center; gap: 10px; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .risk-badge { >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     padding: 5px 12px; border-radius: 20px; font-size: 0.8em; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     font-weight: bold; text-transform: uppercase; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .risk-high { background: #dc3545; color: white; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .risk-medium { background: #fd7e14; color: white; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .risk-low { background: #ffc107; color: #212529; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .risk-info { background: #17a2b8; color: white; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .alert-details { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .detail-item { >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     background: rgba(255,255,255,0.8); padding: 15px; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     border-radius: 8px; border: 1px solid #e9ecef; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .detail-label { font-weight: bold; color: #495057; margin-bottom: 5px; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .detail-value { color: #212529; word-break: break-all; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .solution-box { >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     background: #e8f5e8; border: 1px solid #28a745; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     border-radius: 8px; padding: 20px; margin: 20px 0; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .solution-title { >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     color: #28a745; font-weight: bold; margin-bottom: 10px; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     font-size: 1.1em; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .instances-count { >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     position: absolute; top: 15px; right: 15px; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     background: #6c757d; color: white; padding: 5px 10px; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     border-radius: 15px; font-size: 0.9em; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .reference-links { margin-top: 15px; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .reference-links a { >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     color: #007bff; text-decoration: none; margin-right: 15px; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     padding: 5px 10px; background: #f8f9fa; border-radius: 5px; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     font-size: 0.9em; display: inline-block; margin-bottom: 5px; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .reference-links a:hover { background: #e9ecef; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .nav-button { >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     display: inline-block; padding: 12px 25px; margin: 10px; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     background: #007bff; color: white; text-decoration: none; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     border-radius: 25px; transition: all 0.3s ease; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     font-weight: 500; >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo .nav-button:hover { >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     background: #0056b3; transform: translateY(-2px); >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     box-shadow: 0 5px 15px rgba(0,123,255,0.3); >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo @media (max-width: 768px) { >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     .alert-details { grid-template-columns: 1fr; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     .summary-cards { grid-template-columns: 1fr; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo     .container { margin: 10px; } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
+                        echo } >> ${REPORTS_DIR}\\assets\\enhanced-style.css
                     """
                 }
             }
         }
         
-        stage('Security Scan with Enhanced Reports') {
+        stage('Enhanced Security Scan') {
             steps {
                 script {
-                    echo "Iniciando scans con reportes mejorados..."
+                    echo "Ejecutando scans y generando reportes mejorados..."
+                    
+                    // Frontend Scan
+                    if (env.FRONTEND_OK == 'true') {
+                        echo "Escaneando Frontend..."
+                        try {
+                            timeout(time: 20, unit: 'MINUTES') {
+                                // Generar reporte XML (más completo)
+                                bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}:/zap/wrk\" zaproxy/zap-stable zap-baseline.py -t ${FRONTEND_URL} -x frontend-raw.xml"
+                            }
+                            
+                            // Convertir XML a HTML mejorado
+                            bat """
+                                powershell -Command "
+                                [xml]\\$xml = Get-Content '${REPORTS_DIR}\\frontend-raw.xml'
+                                \\$alerts = \\$xml.OWASPZAPReport.site.alerts.alertitem
+                                \\$summary = @{}
+                                foreach(\\$alert in \\$alerts) {
+                                    \\$risk = \\$alert.riskdesc -split ' ' | Select-Object -First 1
+                                    if(\\$summary.ContainsKey(\\$risk)) { \\$summary[\\$risk]++ } else { \\$summary[\\$risk] = 1 }
+                                }
+                                
+                                \\$html = @'
+<!DOCTYPE html>
+<html lang='es'>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>Frontend Security Report - PRESTABANCO</title>
+    <link rel='stylesheet' href='assets/enhanced-style.css'>
+</head>
+<body>
+    <div class='container'>
+        <div class='header'>
+            <h1>🌐 Frontend Security Report</h1>
+            <p>Target: ${FRONTEND_URL}</p>
+            <p>Generated: '+ (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') +'</p>
+            <a href='dashboard.html' class='nav-button'>← Volver al Dashboard</a>
+        </div>
+        
+        <div class='summary-section'>
+            <h2>📊 Resumen de Alertas</h2>
+            <div class='summary-cards'>
+'@
+                                
+                                if(\\$summary['High']) { \\$html += '<div class=\"card card-high\"><h3>' + \\$summary['High'] + '</h3><p>Riesgo Alto</p></div>' }
+                                else { \\$html += '<div class=\"card card-safe\"><h3>0</h3><p>Riesgo Alto</p></div>' }
+                                
+                                if(\\$summary['Medium']) { \\$html += '<div class=\"card card-medium\"><h3>' + \\$summary['Medium'] + '</h3><p>Riesgo Medio</p></div>' }
+                                else { \\$html += '<div class=\"card card-safe\"><h3>0</h3><p>Riesgo Medio</p></div>' }
+                                
+                                if(\\$summary['Low']) { \\$html += '<div class=\"card card-low\"><h3>' + \\$summary['Low'] + '</h3><p>Riesgo Bajo</p></div>' }
+                                else { \\$html += '<div class=\"card card-safe\"><h3>0</h3><p>Riesgo Bajo</p></div>' }
+                                
+                                if(\\$summary['Informational']) { \\$html += '<div class=\"card card-info\"><h3>' + \\$summary['Informational'] + '</h3><p>Informacional</p></div>' }
+                                else { \\$html += '<div class=\"card card-safe\"><h3>0</h3><p>Informacional</p></div>' }
+                                
+                                \\$html += @'
+            </div>
+        </div>
+        
+        <div class='alerts-section'>
+            <h2>🔍 Detalles de Alertas</h2>
+'@
+                                
+                                foreach(\\$alert in \\$alerts) {
+                                    \\$risk = \\$alert.riskdesc -split ' ' | Select-Object -First 1
+                                    \\$riskClass = \\$risk.ToLower()
+                                    if(\\$risk -eq 'Informational') { \\$riskClass = 'info' }
+                                    
+                                    \\$instances = \\$alert.instances.instance
+                                    \\$instanceCount = if(\\$instances -is [array]) { \\$instances.Count } else { 1 }
+                                    
+                                    \\$html += @\\\"
+            <div class='alert-item alert-\\$riskClass'>
+                <div class='instances-count'>\\$instanceCount instancias</div>
+                <div class='alert-title'>
+                    \\$($alert.name)
+                    <span class='risk-badge risk-\\$riskClass'>\\$risk</span>
+                </div>
+                <p><strong>Descripción:</strong> \\$($alert.desc)</p>
+                
+                <div class='alert-details'>
+                    <div class='detail-item'>
+                        <div class='detail-label'>URLs Afectadas:</div>
+                        <div class='detail-value'>
+\\\"@
+                                    
+                                    foreach(\\$instance in \\$instances) {
+                                        \\$html += \\\"<div>• \\$($instance.uri)</div>\\\"
+                                    }
+                                    
+                                    \\$html += @\\\"
+                        </div>
+                    </div>
+                    <div class='detail-item'>
+                        <div class='detail-label'>Detalles Técnicos:</div>
+                        <div class='detail-value'>
+                            <div><strong>CWE ID:</strong> \\$($alert.cweid)</div>
+                            <div><strong>WASC ID:</strong> \\$($alert.wascid)</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class='solution-box'>
+                    <div class='solution-title'>💡 Solución Recomendada:</div>
+                    <div>\\$($alert.solution)</div>
+                </div>
+                
+                <div class='reference-links'>
+                    <strong>Referencias:</strong><br>
+                    <a href='\\$($alert.reference)' target='_blank'>Documentación Técnica</a>
+                </div>
+            </div>
+\\\"@
+                                }
+                                
+                                \\$html += @'
+        </div>
+    </div>
+</body>
+</html>
+'@
+                                
+                                \\$html | Out-File -FilePath '${REPORTS_DIR}\\frontend-report.html' -Encoding UTF8
+                                "
+                            """
+                            
+                            echo "Frontend scan completado - reporte visual generado"
+                            
+                        } catch (Exception e) {
+                            echo "Frontend scan con warnings: ${e.message}"
+                            currentBuild.result = 'UNSTABLE'
+                        }
+                    }
+                    
+                    // Backend Scan - mismo proceso
+                    if (env.BACKEND_OK == 'true') {
+                        echo "Escaneando Backend..."
+                        try {
+                            timeout(time: 20, unit: 'MINUTES') {
+                                bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}:/zap/wrk\" zaproxy/zap-stable zap-baseline.py -t ${BACKEND_URL} -x backend-raw.xml"
+                            }
+                            
+                            // Convertir XML a HTML mejorado para backend
+                            bat """
+                                powershell -Command "
+                                [xml]\\$xml = Get-Content '${REPORTS_DIR}\\backend-raw.xml'
+                                \\$alerts = \\$xml.OWASPZAPReport.site.alerts.alertitem
+                                \\$summary = @{}
+                                foreach(\\$alert in \\$alerts) {
+                                    \\$risk = \\$alert.riskdesc -split ' ' | Select-Object -First 1
+                                    if(\\$summary.ContainsKey(\\$risk)) { \\$summary[\\$risk]++ } else { \\$summary[\\$risk] = 1 }
+                                }
+                                
+                                # Mismo HTML template pero para backend
+                                \\$html = @'
+<!DOCTYPE html>
+<html lang='es'>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>Backend Security Report - PRESTABANCO</title>
+    <link rel='stylesheet' href='assets/enhanced-style.css'>
+</head>
+<body>
+    <div class='container'>
+        <div class='header'>
+            <h1>⚙️ Backend API Security Report</h1>
+            <p>Target: ${BACKEND_URL}</p>
+            <p>Generated: '+ (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') +'</p>
+            <a href='dashboard.html' class='nav-button'>← Volver al Dashboard</a>
+        </div>
+        
+        <div class='summary-section'>
+            <div style='background: #e8f4fd; border: 1px solid #007bff; border-radius: 8px; padding: 15px; margin-bottom: 20px;'>
+                <strong>🔒 Spring Security Detectado:</strong> Error 403 es normal e indica protección activa
+            </div>
+            <h2>📊 Resumen de Alertas</h2>
+            <div class='summary-cards'>
+'@
+                                
+                                # Mismo código de summary cards...
+                                if(\\$summary['High']) { \\$html += '<div class=\"card card-high\"><h3>' + \\$summary['High'] + '</h3><p>Riesgo Alto</p></div>' }
+                                else { \\$html += '<div class=\"card card-safe\"><h3>0</h3><p>Riesgo Alto</p></div>' }
+                                
+                                if(\\$summary['Medium']) { \\$html += '<div class=\"card card-medium\"><h3>' + \\$summary['Medium'] + '</h3><p>Riesgo Medio</p></div>' }
+                                else { \\$html += '<div class=\"card card-safe\"><h3>0</h3><p>Riesgo Medio</p></div>' }
+                                
+                                if(\\$summary['Low']) { \\$html += '<div class=\"card card-low\"><h3>' + \\$summary['Low'] + '</h3><p>Riesgo Bajo</p></div>' }
+                                else { \\$html += '<div class=\"card card-safe\"><h3>0</h3><p>Riesgo Bajo</p></div>' }
+                                
+                                if(\\$summary['Informational']) { \\$html += '<div class=\"card card-info\"><h3>' + \\$summary['Informational'] + '</h3><p>Informacional</p></div>' }
+                                else { \\$html += '<div class=\"card card-safe\"><h3>0</h3><p>Informacional</p></div>' }
+                                
+                                # Resto igual que frontend pero con título Backend...
+                                \\$html += '</div></div><div class=\"alerts-section\"><h2>🔍 Detalles de Alertas</h2>'
+                                
+                                foreach(\\$alert in \\$alerts) {
+                                    \\$risk = \\$alert.riskdesc -split ' ' | Select-Object -First 1
+                                    \\$riskClass = \\$risk.ToLower()
+                                    if(\\$risk -eq 'Informational') { \\$riskClass = 'info' }
+                                    
+                                    \\$instances = \\$alert.instances.instance
+                                    \\$instanceCount = if(\\$instances -is [array]) { \\$instances.Count } else { 1 }
+                                    
+                                    \\$html += \\\"<div class='alert-item alert-\\$riskClass'><div class='instances-count'>\\$instanceCount instancias</div><div class='alert-title'>\\$($alert.name) <span class='risk-badge risk-\\$riskClass'>\\$risk</span></div><p><strong>Descripción:</strong> \\$($alert.desc)</p><div class='solution-box'><div class='solution-title'>💡 Solución:</div><div>\\$($alert.solution)</div></div></div>\\\"
+                                }
+                                
+                                \\$html += '</div></div></body></html>'
+                                \\$html | Out-File -FilePath '${REPORTS_DIR}\\backend-report.html' -Encoding UTF8
+                                "
+                            """
+                            
+                            echo "Backend scan completado - reporte visual generado"
+                            
+                        } catch (Exception e) {
+                            echo "Backend scan con warnings: ${e.message}"
+                            currentBuild.result = 'UNSTABLE'
+                        }
+                    }
                     
                     // Crear dashboard principal
                     bat """
-                        type ${REPORTS_DIR}\\assets\\header.html > ${REPORTS_DIR}\\dashboard.html
-                        echo ^<div class="container"^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo     ^<div class="header"^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo         ^<h1^>🔒 PRESTABANCO Security Dashboard^</h1^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo         ^<p^>Analisis de Seguridad Completo - Build ${BUILD_NUMBER}^</p^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo         ^<p^>Fecha: %date% %time%^</p^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo     ^</div^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo     ^<div class="navigation"^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo         ^<a href="frontend-report.html" class="nav-button"^>📱 Frontend Report^</a^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo         ^<a href="backend-report.html" class="nav-button"^>⚙️ Backend Report^</a^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo         ^<a href="REPORTE-SEGURIDAD.txt" class="nav-button"^>📄 Summary Report^</a^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo     ^</div^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo     ^<div class="summary-cards"^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo         ^<div class="card card-info"^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo             ^<h3^>Frontend^</h3^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo             ^<p^>${env.FRONTEND_OK == 'true' ? 'Escaneado ✓' : 'No disponible ✗'}^</p^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo ^<!DOCTYPE html^> > ${REPORTS_DIR}\\dashboard.html
+                        echo ^<html lang="es"^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo ^<head^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo     ^<meta charset="UTF-8"^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo     ^<meta name="viewport" content="width=device-width, initial-scale=1.0"^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo     ^<title^>PRESTABANCO Security Dashboard^</title^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo     ^<link rel="stylesheet" href="assets/enhanced-style.css"^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo ^</head^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo ^<body^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo     ^<div class="container"^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo         ^<div class="header"^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo             ^<h1^>🔒 PRESTABANCO Security Dashboard^</h1^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo             ^<p^>Análisis de Seguridad Completo - Build ${BUILD_NUMBER}^</p^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo             ^<p^>%date% %time%^</p^> >> ${REPORTS_DIR}\\dashboard.html
                         echo         ^</div^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo         ^<div class="card card-info"^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo             ^<h3^>Backend^</h3^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo             ^<p^>${env.BACKEND_OK == 'true' ? 'Escaneado ✓' : 'No disponible ✗'}^</p^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo         ^<div class="summary-section"^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo             ^<h2^>📊 Servicios Analizados^</h2^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo             ^<div class="summary-cards"^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo                 ^<div class="card ${env.FRONTEND_OK == 'true' ? 'card-safe' : 'card-medium'}"^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo                     ^<h3^>🌐^</h3^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo                     ^<p^>Frontend ${env.FRONTEND_OK == 'true' ? 'Escaneado' : 'No disponible'}^</p^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo                 ^</div^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo                 ^<div class="card ${env.BACKEND_OK == 'true' ? 'card-safe' : 'card-medium'}"^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo                     ^<h3^>⚙️^</h3^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo                     ^<p^>Backend ${env.BACKEND_OK == 'true' ? 'Escaneado' : 'No disponible'}^</p^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo                 ^</div^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo                 ^<div class="card card-safe"^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo                     ^<h3^>🛡️^</h3^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo                     ^<p^>Database Protegida^</p^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo                 ^</div^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo             ^</div^> >> ${REPORTS_DIR}\\dashboard.html
                         echo         ^</div^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo         ^<div class="card card-good"^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo             ^<h3^>Database^</h3^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo             ^<p^>Protegida ✓^</p^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo         ^<div style="padding: 40px; text-align: center;"^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo             ^<h2^>📄 Reportes Detallados^</h2^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo             ^<a href="frontend-report.html" class="nav-button"^>🌐 Ver Reporte Frontend^</a^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo             ^<a href="backend-report.html" class="nav-button"^>⚙️ Ver Reporte Backend^</a^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo             ^<a href="RESUMEN-SEGURIDAD.txt" class="nav-button"^>📄 Resumen Técnico^</a^> >> ${REPORTS_DIR}\\dashboard.html
                         echo         ^</div^> >> ${REPORTS_DIR}\\dashboard.html
                         echo     ^</div^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo ^</div^> >> ${REPORTS_DIR}\\dashboard.html
-                        echo ^</body^>^</html^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo ^</body^> >> ${REPORTS_DIR}\\dashboard.html
+                        echo ^</html^> >> ${REPORTS_DIR}\\dashboard.html
                     """
                     
-                    // Frontend Scan con reporte mejorado
-                    if (env.FRONTEND_OK == 'true') {
-                        echo "Escaneando Frontend con reporte visual..."
-                        try {
-                            timeout(time: 15, unit: 'MINUTES') {
-                                // Generar reporte base de ZAP
-                                bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}:/zap/wrk\" zaproxy/zap-stable zap-baseline.py -t ${FRONTEND_URL} -r frontend-zap-base.html"
-                                
-                                // Crear version mejorada
-                                bat """
-                                    type ${REPORTS_DIR}\\assets\\header.html > ${REPORTS_DIR}\\frontend-report.html
-                                    echo ^<div class="container"^> >> ${REPORTS_DIR}\\frontend-report.html
-                                    echo     ^<div class="header"^> >> ${REPORTS_DIR}\\frontend-report.html
-                                    echo         ^<h1^>🌐 Frontend Security Report^</h1^> >> ${REPORTS_DIR}\\frontend-report.html
-                                    echo         ^<p^>Target: ${FRONTEND_URL}^</p^> >> ${REPORTS_DIR}\\frontend-report.html
-                                    echo         ^<a href="dashboard.html" class="nav-button"^>⬅️ Volver al Dashboard^</a^> >> ${REPORTS_DIR}\\frontend-report.html
-                                    echo     ^</div^> >> ${REPORTS_DIR}\\frontend-report.html
-                                    echo     ^<div class="scan-section"^> >> ${REPORTS_DIR}\\frontend-report.html
-                                    echo         ^<h2^>📊 Resultados del Escaneo^</h2^> >> ${REPORTS_DIR}\\frontend-report.html
-                                    echo         ^<p^>El reporte detallado de OWASP ZAP se encuentra abajo:^</p^> >> ${REPORTS_DIR}\\frontend-report.html
-                                    echo         ^<iframe src="frontend-zap-base.html" width="100%%" height="800px" style="border:1px solid #ddd; border-radius:8px;"^>^</iframe^> >> ${REPORTS_DIR}\\frontend-report.html
-                                    echo     ^</div^> >> ${REPORTS_DIR}\\frontend-report.html
-                                    echo ^</div^> >> ${REPORTS_DIR}\\frontend-report.html
-                                    echo ^</body^>^</html^> >> ${REPORTS_DIR}\\frontend-report.html
-                                """
-                            }
-                            echo "Frontend scan completado con reporte visual"
-                        } catch (Exception e) {
-                            echo "Frontend scan con warnings"
-                            // Crear reporte de error visual
-                            bat """
-                                type ${REPORTS_DIR}\\assets\\header.html > ${REPORTS_DIR}\\frontend-report.html
-                                echo ^<div class="container"^> >> ${REPORTS_DIR}\\frontend-report.html
-                                echo     ^<div class="header"^> >> ${REPORTS_DIR}\\frontend-report.html
-                                echo         ^<h1^>🌐 Frontend Security Report^</h1^> >> ${REPORTS_DIR}\\frontend-report.html
-                                echo         ^<p^>Target: ${FRONTEND_URL}^</p^> >> ${REPORTS_DIR}\\frontend-report.html
-                                echo     ^</div^> >> ${REPORTS_DIR}\\frontend-report.html
-                                echo     ^<div class="scan-section"^> >> ${REPORTS_DIR}\\frontend-report.html
-                                echo         ^<div class="card card-warning"^> >> ${REPORTS_DIR}\\frontend-report.html
-                                echo             ^<h3^>⚠️ Scan completado con warnings^</h3^> >> ${REPORTS_DIR}\\frontend-report.html
-                                echo             ^<p^>Exit code 2 es normal - indica warnings menores^</p^> >> ${REPORTS_DIR}\\frontend-report.html
-                                echo         ^</div^> >> ${REPORTS_DIR}\\frontend-report.html
-                                echo     ^</div^> >> ${REPORTS_DIR}\\frontend-report.html
-                                echo ^</div^> >> ${REPORTS_DIR}\\frontend-report.html
-                                echo ^</body^>^</html^> >> ${REPORTS_DIR}\\frontend-report.html
-                            """
-                        }
-                    }
-                    
-                    // Backend Scan con reporte mejorado
-                    if (env.BACKEND_OK == 'true') {
-                        echo "Escaneando Backend con reporte visual..."
-                        try {
-                            timeout(time: 15, unit: 'MINUTES') {
-                                // Generar reporte base de ZAP
-                                bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}:/zap/wrk\" zaproxy/zap-stable zap-baseline.py -t ${BACKEND_URL} -r backend-zap-base.html"
-                                
-                                // Crear version mejorada
-                                bat """
-                                    type ${REPORTS_DIR}\\assets\\header.html > ${REPORTS_DIR}\\backend-report.html
-                                    echo ^<div class="container"^> >> ${REPORTS_DIR}\\backend-report.html
-                                    echo     ^<div class="header"^> >> ${REPORTS_DIR}\\backend-report.html
-                                    echo         ^<h1^>⚙️ Backend API Security Report^</h1^> >> ${REPORTS_DIR}\\backend-report.html
-                                    echo         ^<p^>Target: ${BACKEND_URL}^</p^> >> ${REPORTS_DIR}\\backend-report.html
-                                    echo         ^<a href="dashboard.html" class="nav-button"^>⬅️ Volver al Dashboard^</a^> >> ${REPORTS_DIR}\\backend-report.html
-                                    echo     ^</div^> >> ${REPORTS_DIR}\\backend-report.html
-                                    echo     ^<div class="scan-section"^> >> ${REPORTS_DIR}\\backend-report.html
-                                    echo         ^<div class="card card-info"^> >> ${REPORTS_DIR}\\backend-report.html
-                                    echo             ^<h3^>🔒 Spring Security Detectado^</h3^> >> ${REPORTS_DIR}\\backend-report.html
-                                    echo             ^<p^>Error 403 es normal - indica seguridad activa^</p^> >> ${REPORTS_DIR}\\backend-report.html
-                                    echo         ^</div^> >> ${REPORTS_DIR}\\backend-report.html
-                                    echo         ^<h2^>📊 Resultados del Escaneo API^</h2^> >> ${REPORTS_DIR}\\backend-report.html
-                                    echo         ^<iframe src="backend-zap-base.html" width="100%%" height="800px" style="border:1px solid #ddd; border-radius:8px;"^>^</iframe^> >> ${REPORTS_DIR}\\backend-report.html
-                                    echo     ^</div^> >> ${REPORTS_DIR}\\backend-report.html
-                                    echo ^</div^> >> ${REPORTS_DIR}\\backend-report.html
-                                    echo ^</body^>^</html^> >> ${REPORTS_DIR}\\backend-report.html
-                                """
-                            }
-                            echo "Backend scan completado con reporte visual"
-                        } catch (Exception e) {
-                            echo "Backend scan con warnings"
-                            // Crear reporte de error visual
-                            bat """
-                                type ${REPORTS_DIR}\\assets\\header.html > ${REPORTS_DIR}\\backend-report.html
-                                echo ^<div class="container"^> >> ${REPORTS_DIR}\\backend-report.html
-                                echo     ^<div class="header"^> >> ${REPORTS_DIR}\\backend-report.html
-                                echo         ^<h1^>⚙️ Backend API Security Report^</h1^> >> ${REPORTS_DIR}\\backend-report.html
-                                echo         ^<p^>Target: ${BACKEND_URL}^</p^> >> ${REPORTS_DIR}\\backend-report.html
-                                echo     ^</div^> >> ${REPORTS_DIR}\\backend-report.html
-                                echo     ^<div class="scan-section"^> >> ${REPORTS_DIR}\\backend-report.html
-                                echo         ^<div class="card card-good"^> >> ${REPORTS_DIR}\\backend-report.html
-                                echo             ^<h3^>✅ Spring Security Funcionando^</h3^> >> ${REPORTS_DIR}\\backend-report.html
-                                echo             ^<p^>Error 403 indica protección activa^</p^> >> ${REPORTS_DIR}\\backend-report.html
-                                echo         ^</div^> >> ${REPORTS_DIR}\\backend-report.html
-                                echo     ^</div^> >> ${REPORTS_DIR}\\backend-report.html
-                                echo ^</div^> >> ${REPORTS_DIR}\\backend-report.html
-                                echo ^</body^>^</html^> >> ${REPORTS_DIR}\\backend-report.html
-                            """
-                        }
-                    }
-                    
-                    // Crear reporte de resumen mejorado
+                    // Crear resumen técnico
                     bat """
-                        echo ===================================== > ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo    PRESTABANCO - SECURITY SCAN     >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo ===================================== >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo Fecha: %date% %time% >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo Build: ${BUILD_NUMBER} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo ARCHIVOS GENERADOS: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo   1. dashboard.html (INICIO - abrir en navegador) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo   2. frontend-report.html (reporte visual frontend) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo   3. backend-report.html (reporte visual backend) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo   4. REPORTE-SEGURIDAD.txt (este archivo) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo COMO USAR: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo   1. Abrir dashboard.html en navegador >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo   2. Navegar entre reportes usando los botones >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo   3. Los reportes ZAP estan embebidos en iframes >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo SERVICIOS ESCANEADOS: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo   Frontend:  ${env.FRONTEND_OK} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo   Backend:   ${env.BACKEND_OK} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo   Database:  PROTEGIDA (configuracion correcta) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo SCAN COMPLETADO EXITOSAMENTE >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo ===================================== > ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo    PRESTABANCO - SECURITY SCAN     >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo ===================================== >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo. >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo Fecha: %date% %time% >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo Build: ${BUILD_NUMBER} >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo. >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo ARCHIVOS GENERADOS (VERSION MEJORADA): >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo. >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo 🏠 dashboard.html (EMPEZAR AQUI) >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo    - Dashboard principal con navegacion >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo    - Resumen visual de todos los servicios >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo. >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo 🌐 frontend-report.html (REPORTE VISUAL MEJORADO) >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo    - Alertas organizadas por riesgo >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo    - Cards coloridos para cada vulnerabilidad >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo    - Soluciones destacadas visualmente >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo    - Enlaces a referencias técnicas >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo. >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo ⚙️ backend-report.html (REPORTE VISUAL MEJORADO) >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo    - Alertas organizadas por riesgo >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo    - Nota sobre Spring Security >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo    - Detalles técnicos de cada vulnerabilidad >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo. >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo SERVICIOS ANALIZADOS: >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo   Frontend:  ${env.FRONTEND_OK} >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo   Backend:   ${env.BACKEND_OK} >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo   Database:  PROTEGIDA (configuracion correcta) >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo. >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo MEJORAS VISUALES INCLUIDAS: >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo ✓ Diseño moderno con gradientes >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo ✓ Cards coloridos por nivel de riesgo >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo ✓ Alertas organizadas y fáciles de leer >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo ✓ Soluciones destacadas en cajas verdes >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo ✓ Contador de instancias por vulnerabilidad >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo ✓ Referencias técnicas como botones >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo ✓ Responsive design para móviles >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo ✓ Navegación fluida entre reportes >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo. >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo COMO USAR: >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo 1. Abrir dashboard.html en navegador >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo 2. Hacer clic en botones para ver reportes detallados >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo 3. Cada alerta tiene colores segun riesgo: >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo    - Rojo: Alto riesgo >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo    - Naranja: Riesgo medio >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo    - Amarillo: Riesgo bajo >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo    - Azul: Informacional >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo    - Verde: Sin problemas >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo. >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo ✅ REPORTES VISUALES MEJORADOS GENERADOS >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
+                        echo 🎨 TODAS LAS ALERTAS ORGANIZADAS Y FACILES DE IDENTIFICAR >> ${REPORTS_DIR}\\RESUMEN-SEGURIDAD.txt
                     """
                     
                     currentBuild.result = 'SUCCESS'
@@ -320,19 +513,17 @@ pipeline {
             }
         }
         
-        stage('Cleanup Temp Files') {
+        stage('Cleanup') {
             steps {
                 script {
                     try {
                         bat '''
                             cd %cd%\\''' + "${REPORTS_DIR}" + '''
-                            if exist *.json del *.json
-                            if exist *.xml del *.xml
+                            if exist *-raw.xml del *-raw.xml
                             if exist *.yaml del *.yaml
                             if exist *.yml del *.yml
-                            if exist zap.yaml del zap.yaml
                         '''
-                        echo "Archivos temporales eliminados"
+                        echo "Archivos temporales eliminados - reportes mejorados listos"
                     } catch (Exception e) {
                         echo "No hay archivos temporales para eliminar"
                     }
@@ -348,36 +539,53 @@ pipeline {
                 
                 echo """
                 ==========================================
-                    PRESTABANCO SECURITY SCAN VISUAL
+                   PRESTABANCO SECURITY REPORTS ENHANCED
                 ==========================================
                 
-                🎨 REPORTES VISUALES GENERADOS:
-                  1. dashboard.html (DASHBOARD PRINCIPAL)
-                  2. frontend-report.html (reporte visual)
-                  3. backend-report.html (reporte visual)
-                  4. REPORTE-SEGURIDAD.txt (resumen)
+                🎨 REPORTES VISUALES MEJORADOS GENERADOS:
+                   🏠 dashboard.html (DASHBOARD PRINCIPAL)
+                   🌐 frontend-report.html (alertas organizadas)
+                   ⚙️ backend-report.html (alertas organizadas)
+                   📄 RESUMEN-SEGURIDAD.txt (guía técnica)
+                   🎨 assets/enhanced-style.css (estilos modernos)
                 
-                🌐 ACCESO: ${BUILD_URL}artifact/${REPORTS_DIR}/
+                🔗 ACCESO: ${BUILD_URL}artifact/${REPORTS_DIR}/
                 
-                📱 COMO USAR:
-                  1. Descargar archivos desde Jenkins
-                  2. Abrir dashboard.html en navegador
-                  3. Navegar usando los botones
+                ✨ MEJORAS VISUALES:
+                   - Cards coloridos por nivel de riesgo
+                   - Alertas organizadas y fáciles de leer
+                   - Soluciones destacadas en cajas verdes
+                   - Contador de instancias por vulnerabilidad
+                   - Referencias técnicas como botones clickeables
+                   - Diseño responsive para móviles
+                   - Navegación fluida entre reportes
+                   - Gradientes modernos y sombras
                 
-                ✨ CARACTERISTICAS:
-                  - Diseño moderno con gradientes
-                  - Navegacion entre reportes
-                  - Reportes ZAP embebidos
-                  - Responsive design
-                  - Iconos y colores
+                📖 COMO USAR:
+                   1. Descargar security-reports.zip
+                   2. Abrir dashboard.html en navegador
+                   3. Navegar usando botones azules
+                   4. Identificar alertas por colores:
+                      🔴 Alto riesgo | 🟠 Medio | 🟡 Bajo | 🔵 Info
                 
-                🎯 SERVICIOS:
-                  Frontend: ${env.FRONTEND_OK == 'true' ? 'ESCANEADO' : 'NO DISPONIBLE'}
-                  Backend:  ${env.BACKEND_OK == 'true' ? 'ESCANEADO' : 'NO DISPONIBLE'}
-                  Database: PROTEGIDA
+                🎯 SERVICIOS ANALIZADOS:
+                   Frontend: ${env.FRONTEND_OK == 'true' ? 'ESCANEADO Y VISUALIZADO' : 'NO DISPONIBLE'}
+                   Backend:  ${env.BACKEND_OK == 'true' ? 'ESCANEADO Y VISUALIZADO' : 'NO DISPONIBLE'}
+                   Database: PROTEGIDA (configuración segura)
+                
+                🏆 RESULTADO: ALERTAS ORGANIZADAS VISUALMENTE
                 ==========================================
                 """
             }
+        }
+        success {
+            echo "🎉 Security scan completado - reportes visuales mejorados generados!"
+        }
+        unstable {
+            echo "⚠️ Scan completado con warnings - reportes visuales disponibles"
+        }
+        failure {
+            echo "❌ Scan falló - revisar configuración"
         }
     }
 }
