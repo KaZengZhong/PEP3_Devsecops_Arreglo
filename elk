@@ -1,0 +1,686 @@
+pipeline {
+    agent any
+    
+    parameters {
+        choice(
+            name: 'SCAN_DEPTH',
+            choices: ['QUICK', 'STANDARD', 'COMPREHENSIVE'],
+            description: 'Profundidad del escaneo de seguridad'
+        )
+        booleanParam(
+            name: 'DEPLOY_ELK',
+            defaultValue: true,
+            description: 'Desplegar Elastic Stack'
+        )
+        booleanParam(
+            name: 'SEND_TO_ELASTIC',
+            defaultValue: true,
+            description: 'Enviar resultados a Elasticsearch'
+        )
+    }
+    
+    environment {
+        REPORTS_DIR = 'security-reports'
+        ELK_DIR = 'elk-stack'
+        FRONTEND_URL = 'http://localhost:8070'
+        BACKEND_URL = 'http://localhost:8090'
+        ELASTICSEARCH_URL = 'http://localhost:9200'
+        KIBANA_URL = 'http://localhost:5601'
+        ELASTIC_INDEX = 'prestabanco-security'
+    }
+    
+    stages {
+        stage('Initialize ELK Pipeline') {
+            steps {
+                script {
+                    echo "=== PRESTABANCO SECURITY + ELASTIC STACK PIPELINE ==="
+                    echo "Frontend: ${FRONTEND_URL}"
+                    echo "Backend: ${BACKEND_URL}"
+                    echo "Elasticsearch: ${ELASTICSEARCH_URL}"
+                    echo "Kibana: ${KIBANA_URL}"
+                    
+                    bat """
+                        if exist ${REPORTS_DIR} rmdir /s /q ${REPORTS_DIR}
+                        if exist ${ELK_DIR} rmdir /s /q ${ELK_DIR}
+                        mkdir ${REPORTS_DIR}
+                        mkdir ${ELK_DIR}
+                        mkdir ${ELK_DIR}\\config
+                        mkdir ${ELK_DIR}\\data
+                    """
+                }
+            }
+        }
+        
+        stage('Setup Elastic Stack Configuration') {
+            when {
+                expression { params.DEPLOY_ELK == true }
+            }
+            steps {
+                script {
+                    echo "Configurando Elastic Stack..."
+                    
+                    // Crear docker-compose para ELK
+                    bat """
+                        echo version: '3.8' > ${ELK_DIR}\\docker-compose-elk.yml
+                        echo services: >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo   elasticsearch: >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo     image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0 >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo     container_name: elasticsearch >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo     environment: >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - discovery.type=single-node >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - xpack.security.enabled=false >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - xpack.security.enrollment.enabled=false >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - "ES_JAVA_OPTS=-Xms1g -Xmx1g" >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo     ports: >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - "9200:9200" >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - "9300:9300" >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo     volumes: >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - elasticsearch_data:/usr/share/elasticsearch/data >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo     networks: >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - elk >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo. >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo   kibana: >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo     image: docker.elastic.co/kibana/kibana:8.11.0 >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo     container_name: kibana >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo     environment: >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200 >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - xpack.security.enabled=false >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - xpack.encryptedSavedObjects.encryptionKey=fhjskloppd678ehkdfdlliverpoolfcr >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo     ports: >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - "5601:5601" >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo     depends_on: >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - elasticsearch >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo     networks: >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - elk >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo. >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo   logstash: >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo     image: docker.elastic.co/logstash/logstash:8.11.0 >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo     container_name: logstash >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo     volumes: >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - ./config/logstash.conf:/usr/share/logstash/pipeline/logstash.conf >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - ./data:/usr/share/logstash/data >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo     ports: >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - "5044:5044" >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - "9600:9600" >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo     depends_on: >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - elasticsearch >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo     networks: >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo       - elk >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo. >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo networks: >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo   elk: >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo     driver: bridge >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo. >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo volumes: >> ${ELK_DIR}\\docker-compose-elk.yml
+                        echo   elasticsearch_data: >> ${ELK_DIR}\\docker-compose-elk.yml
+                    """
+                    
+                    // Configuración de Logstash para procesar reportes ZAP
+                    bat """
+                        echo input { > ${ELK_DIR}\\config\\logstash.conf
+                        echo   file { >> ${ELK_DIR}\\config\\logstash.conf
+                        echo     path => "/usr/share/logstash/data/*.json" >> ${ELK_DIR}\\config\\logstash.conf
+                        echo     start_position => "beginning" >> ${ELK_DIR}\\config\\logstash.conf
+                        echo     sincedb_path => "/dev/null" >> ${ELK_DIR}\\config\\logstash.conf
+                        echo     codec => "json" >> ${ELK_DIR}\\config\\logstash.conf
+                        echo   } >> ${ELK_DIR}\\config\\logstash.conf
+                        echo } >> ${ELK_DIR}\\config\\logstash.conf
+                        echo. >> ${ELK_DIR}\\config\\logstash.conf
+                        echo filter { >> ${ELK_DIR}\\config\\logstash.conf
+                        echo   if [site] { >> ${ELK_DIR}\\config\\logstash.conf
+                        echo     mutate { >> ${ELK_DIR}\\config\\logstash.conf
+                        echo       add_field => { "scan_type" => "zap_security" } >> ${ELK_DIR}\\config\\logstash.conf
+                        echo       add_field => { "project" => "prestabanco" } >> ${ELK_DIR}\\config\\logstash.conf
+                        echo       add_field => { "build_number" => "${BUILD_NUMBER}" } >> ${ELK_DIR}\\config\\logstash.conf
+                        echo       add_field => { "pipeline_name" => "${JOB_NAME}" } >> ${ELK_DIR}\\config\\logstash.conf
+                        echo     } >> ${ELK_DIR}\\config\\logstash.conf
+                        echo     date { >> ${ELK_DIR}\\config\\logstash.conf
+                        echo       match => [ "timestamp", "ISO8601" ] >> ${ELK_DIR}\\config\\logstash.conf
+                        echo       target => "@timestamp" >> ${ELK_DIR}\\config\\logstash.conf
+                        echo     } >> ${ELK_DIR}\\config\\logstash.conf
+                        echo   } >> ${ELK_DIR}\\config\\logstash.conf
+                        echo } >> ${ELK_DIR}\\config\\logstash.conf
+                        echo. >> ${ELK_DIR}\\config\\logstash.conf
+                        echo output { >> ${ELK_DIR}\\config\\logstash.conf
+                        echo   elasticsearch { >> ${ELK_DIR}\\config\\logstash.conf
+                        echo     hosts => ["elasticsearch:9200"] >> ${ELK_DIR}\\config\\logstash.conf
+                        echo     index => "${ELASTIC_INDEX}-%{+YYYY.MM.dd}" >> ${ELK_DIR}\\config\\logstash.conf
+                        echo   } >> ${ELK_DIR}\\config\\logstash.conf
+                        echo   stdout { >> ${ELK_DIR}\\config\\logstash.conf
+                        echo     codec => rubydebug >> ${ELK_DIR}\\config\\logstash.conf
+                        echo   } >> ${ELK_DIR}\\config\\logstash.conf
+                        echo } >> ${ELK_DIR}\\config\\logstash.conf
+                    """
+                }
+            }
+        }
+        
+        stage('Deploy Elastic Stack') {
+            when {
+                expression { params.DEPLOY_ELK == true }
+            }
+            steps {
+                script {
+                    echo "Desplegando Elastic Stack..."
+                    try {
+                        bat 'cd ' + ELK_DIR + ' && docker-compose -f docker-compose-elk.yml down || echo "No ELK containers to stop"'
+                        bat 'cd ' + ELK_DIR + ' && docker-compose -f docker-compose-elk.yml up -d'
+                        
+                        echo "Esperando que Elasticsearch inicie..."
+                        sleep(time: 120, unit: 'SECONDS')
+                        
+                        // Verificar que Elasticsearch esté corriendo
+                        timeout(time: 5, unit: 'MINUTES') {
+                            waitUntil {
+                                script {
+                                    try {
+                                        bat 'curl -f ' + ELASTICSEARCH_URL + '/_cluster/health'
+                                        return true
+                                    } catch (Exception e) {
+                                        echo "Esperando Elasticsearch..."
+                                        return false
+                                    }
+                                }
+                            }
+                        }
+                        
+                        echo "Elasticsearch iniciado correctamente"
+                        
+                    } catch (Exception e) {
+                        echo "Warning: ELK deployment issue: ${e.message}"
+                        currentBuild.result = 'UNSTABLE'
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy PrestaBanco Services') {
+            steps {
+                script {
+                    echo "Desplegando servicios PrestaBanco..."
+                    bat 'docker-compose -f compose2.yml down || echo "No containers to stop"'
+                    bat 'docker-compose -f compose2.yml up -d'
+                    sleep(time: 90, unit: 'SECONDS')
+                }
+            }
+        }
+        
+        stage('Verify All Services') {
+            steps {
+                script {
+                    def frontendOk = false
+                    def backendOk = false
+                    def elasticOk = false
+                    def kibanaOk = false
+                    
+                    echo "Verificando todos los servicios..."
+                    bat 'docker ps --format "table {{.Names}}\\t{{.Ports}}\\t{{.Status}}"'
+                    
+                    // Verificar Frontend
+                    try {
+                        bat 'powershell -Command "Invoke-WebRequest -Uri http://localhost:8070 -TimeoutSec 10 -UseBasicParsing | Out-Null"'
+                        frontendOk = true
+                        echo "✅ Frontend: OK"
+                    } catch (Exception e) {
+                        echo "❌ Frontend: FAILED"
+                    }
+                    
+                    // Verificar Backend
+                    try {
+                        bat 'powershell -Command "Test-NetConnection -ComputerName localhost -Port 8090 -WarningAction SilentlyContinue"'
+                        backendOk = true
+                        echo "✅ Backend: OK"
+                    } catch (Exception e) {
+                        echo "❌ Backend: FAILED"
+                    }
+                    
+                    // Verificar Elasticsearch
+                    if (params.DEPLOY_ELK) {
+                        try {
+                            bat 'curl -f ' + ELASTICSEARCH_URL + '/_cluster/health'
+                            elasticOk = true
+                            echo "✅ Elasticsearch: OK"
+                        } catch (Exception e) {
+                            echo "❌ Elasticsearch: FAILED"
+                        }
+                        
+                        // Verificar Kibana
+                        try {
+                            bat 'powershell -Command "Test-NetConnection -ComputerName localhost -Port 5601 -WarningAction SilentlyContinue"'
+                            kibanaOk = true
+                            echo "✅ Kibana: OK"
+                        } catch (Exception e) {
+                            echo "❌ Kibana: FAILED"
+                        }
+                    }
+                    
+                    env.FRONTEND_OK = frontendOk.toString()
+                    env.BACKEND_OK = backendOk.toString()
+                    env.ELASTIC_OK = elasticOk.toString()
+                    env.KIBANA_OK = kibanaOk.toString()
+                }
+            }
+        }
+        
+        stage('Security Scan with ELK Integration') {
+            steps {
+                script {
+                    echo "Ejecutando scans de seguridad con integración ELK..."
+                    
+                    // Frontend Scan
+                    if (env.FRONTEND_OK == 'true') {
+                        echo "Escaneando Frontend..."
+                        try {
+                            timeout(time: 20, unit: 'MINUTES') {
+                                bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}:/zap/wrk\" zaproxy/zap-stable zap-baseline.py -t ${FRONTEND_URL} -J frontend-report.json -x frontend-report.xml -r frontend-report.html"
+                            }
+                            echo "✅ Frontend scan completado"
+                        } catch (Exception e) {
+                            echo "⚠️ Frontend scan con warnings: ${e.message}"
+                            currentBuild.result = 'UNSTABLE'
+                        }
+                    }
+                    
+                    // Backend Scan
+                    if (env.BACKEND_OK == 'true') {
+                        echo "Escaneando Backend..."
+                        try {
+                            timeout(time: 20, unit: 'MINUTES') {
+                                bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}:/zap/wrk\" zaproxy/zap-stable zap-baseline.py -t ${BACKEND_URL} -J backend-report.json -x backend-report.xml -r backend-report.html"
+                            }
+                            echo "✅ Backend scan completado"
+                        } catch (Exception e) {
+                            echo "⚠️ Backend scan con warnings: ${e.message}"
+                            currentBuild.result = 'UNSTABLE'
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Process and Send to Elasticsearch') {
+            when {
+                allOf {
+                    expression { params.SEND_TO_ELASTIC == true }
+                    expression { env.ELASTIC_OK == 'true' }
+                }
+            }
+            steps {
+                script {
+                    echo "Procesando reportes para Elasticsearch..."
+                    
+                    try {
+                        // Crear índice en Elasticsearch con mapping optimizado
+                        bat """
+                            curl -X PUT "${ELASTICSEARCH_URL}/${ELASTIC_INDEX}-template" -H "Content-Type: application/json" -d "{
+                              \\"index_patterns\\": [\\"${ELASTIC_INDEX}-*\\"],
+                              \\"mappings\\": {
+                                \\"properties\\": {
+                                  \\"@timestamp\\": { \\"type\\": \\"date\\" },
+                                  \\"project\\": { \\"type\\": \\"keyword\\" },
+                                  \\"scan_type\\": { \\"type\\": \\"keyword\\" },
+                                  \\"build_number\\": { \\"type\\": \\"keyword\\" },
+                                  \\"pipeline_name\\": { \\"type\\": \\"keyword\\" },
+                                  \\"target_url\\": { \\"type\\": \\"keyword\\" },
+                                  \\"alert_name\\": { \\"type\\": \\"text\\" },
+                                  \\"risk_level\\": { \\"type\\": \\"keyword\\" },
+                                  \\"confidence\\": { \\"type\\": \\"keyword\\" },
+                                  \\"cwe_id\\": { \\"type\\": \\"keyword\\" },
+                                  \\"wasc_id\\": { \\"type\\": \\"keyword\\" },
+                                  \\"description\\": { \\"type\\": \\"text\\" },
+                                  \\"solution\\": { \\"type\\": \\"text\\" },
+                                  \\"instances_count\\": { \\"type\\": \\"integer\\" }
+                                }
+                              }
+                            }"
+                        """
+                        
+                        // Procesar reportes JSON y enviar a Elasticsearch
+                        bat """
+                            powershell -Command "
+                            if (Test-Path '${REPORTS_DIR}\\frontend-report.json') {
+                                \\$frontendData = Get-Content '${REPORTS_DIR}\\frontend-report.json' | ConvertFrom-Json
+                                if (\\$frontendData.site.alerts) {
+                                    foreach (\\$alert in \\$frontendData.site.alerts) {
+                                        \\$doc = @{
+                                            '@timestamp' = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+                                            'project' = 'prestabanco'
+                                            'scan_type' = 'frontend_security'
+                                            'build_number' = '${BUILD_NUMBER}'
+                                            'pipeline_name' = '${JOB_NAME}'
+                                            'target_url' = '${FRONTEND_URL}'
+                                            'alert_name' = \\$alert.name
+                                            'risk_level' = \\$alert.riskdesc
+                                            'confidence' = \\$alert.confidence
+                                            'cwe_id' = \\$alert.cweid
+                                            'wasc_id' = \\$alert.wascid
+                                            'description' = \\$alert.desc
+                                            'solution' = \\$alert.solution
+                                            'instances_count' = if (\\$alert.instances) { \\$alert.instances.Count } else { 0 }
+                                        }
+                                        \\$json = \\$doc | ConvertTo-Json -Depth 10 -Compress
+                                        Invoke-RestMethod -Uri '${ELASTICSEARCH_URL}/${ELASTIC_INDEX}-frontend/_doc' -Method POST -Body \\$json -ContentType 'application/json'
+                                    }
+                                }
+                            }
+                            
+                            if (Test-Path '${REPORTS_DIR}\\backend-report.json') {
+                                \\$backendData = Get-Content '${REPORTS_DIR}\\backend-report.json' | ConvertFrom-Json
+                                if (\\$backendData.site.alerts) {
+                                    foreach (\\$alert in \\$backendData.site.alerts) {
+                                        \\$doc = @{
+                                            '@timestamp' = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+                                            'project' = 'prestabanco'
+                                            'scan_type' = 'backend_security'
+                                            'build_number' = '${BUILD_NUMBER}'
+                                            'pipeline_name' = '${JOB_NAME}'
+                                            'target_url' = '${BACKEND_URL}'
+                                            'alert_name' = \\$alert.name
+                                            'risk_level' = \\$alert.riskdesc
+                                            'confidence' = \\$alert.confidence
+                                            'cwe_id' = \\$alert.cweid
+                                            'wasc_id' = \\$alert.wascid
+                                            'description' = \\$alert.desc
+                                            'solution' = \\$alert.solution
+                                            'instances_count' = if (\\$alert.instances) { \\$alert.instances.Count } else { 0 }
+                                        }
+                                        \\$json = \\$doc | ConvertTo-Json -Depth 10 -Compress
+                                        Invoke-RestMethod -Uri '${ELASTICSEARCH_URL}/${ELASTIC_INDEX}-backend/_doc' -Method POST -Body \\$json -ContentType 'application/json'
+                                    }
+                                }
+                            }
+                            "
+                        """
+                        
+                        echo "✅ Datos enviados a Elasticsearch"
+                        
+                        // Crear un resumen de métricas
+                        bat """
+                            curl -X GET "${ELASTICSEARCH_URL}/${ELASTIC_INDEX}-*/_search?size=0" -H "Content-Type: application/json" -d "{
+                              \\"aggs\\": {
+                                \\"risk_levels\\": {
+                                  \\"terms\\": { \\"field\\": \\"risk_level\\" }
+                                },
+                                \\"scan_types\\": {
+                                  \\"terms\\": { \\"field\\": \\"scan_type\\" }
+                                }
+                              }
+                            }" > ${REPORTS_DIR}\\elasticsearch-summary.json
+                        """
+                        
+                    } catch (Exception e) {
+                        echo "⚠️ Error enviando datos a Elasticsearch: ${e.message}"
+                        currentBuild.result = 'UNSTABLE'
+                    }
+                }
+            }
+        }
+        
+        stage('Setup Kibana Dashboards') {
+            when {
+                allOf {
+                    expression { params.DEPLOY_ELK == true }
+                    expression { env.KIBANA_OK == 'true' }
+                }
+            }
+            steps {
+                script {
+                    echo "Configurando dashboards en Kibana..."
+                    
+                    try {
+                        // Esperar a que Kibana esté completamente listo
+                        sleep(time: 60, unit: 'SECONDS')
+                        
+                        // Crear index pattern
+                        bat """
+                            curl -X POST "${KIBANA_URL}/api/saved_objects/index-pattern/${ELASTIC_INDEX}-*" -H "Content-Type: application/json" -H "kbn-xsrf: true" -d "{
+                              \\"attributes\\": {
+                                \\"title\\": \\"${ELASTIC_INDEX}-*\\",
+                                \\"timeFieldName\\": \\"@timestamp\\"
+                              }
+                            }"
+                        """
+                        
+                        echo "✅ Index pattern creado en Kibana"
+                        
+                    } catch (Exception e) {
+                        echo "⚠️ Warning configurando Kibana: ${e.message}"
+                    }
+                }
+            }
+        }
+        
+        stage('Generate Comprehensive Report') {
+            steps {
+                script {
+                    echo "Generando reporte completo con URLs de Elastic Stack..."
+                    
+                    bat """
+                        echo ========================================== > ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo    PRESTABANCO + ELASTIC STACK REPORT    >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo ========================================== >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo. >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo Fecha: %date% %time% >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo Build: ${BUILD_NUMBER} >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo Pipeline: ${JOB_NAME} >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo. >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo SERVICIOS DESPLEGADOS: >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo ====================== >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo Frontend:      ${env.FRONTEND_OK == 'true' ? 'ACTIVO' : 'INACTIVO'} - ${FRONTEND_URL} >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo Backend:       ${env.BACKEND_OK == 'true' ? 'ACTIVO' : 'INACTIVO'} - ${BACKEND_URL} >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo Elasticsearch: ${env.ELASTIC_OK == 'true' ? 'ACTIVO' : 'INACTIVO'} - ${ELASTICSEARCH_URL} >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo Kibana:        ${env.KIBANA_OK == 'true' ? 'ACTIVO' : 'INACTIVO'} - ${KIBANA_URL} >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo. >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo ACCESO A ELASTIC STACK: >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo ======================== >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo 🔍 Elasticsearch API: ${ELASTICSEARCH_URL} >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo 📊 Kibana Dashboard: ${KIBANA_URL} >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo 📈 Index Pattern: ${ELASTIC_INDEX}-* >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo. >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo REPORTES GENERADOS: >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo ================== >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo 📄 frontend-report.html (reporte visual) >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo 📄 backend-report.html (reporte visual) >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo 📊 frontend-report.json (datos para Elasticsearch) >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo 📊 backend-report.json (datos para Elasticsearch) >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo 📈 elasticsearch-summary.json (métricas agregadas) >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo. >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo COMO USAR KIBANA: >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo ================= >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo 1. Abrir ${KIBANA_URL} en navegador >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo 2. Ir a "Discover" para explorar datos >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo 3. Seleccionar index pattern: ${ELASTIC_INDEX}-* >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo 4. Crear visualizaciones personalizadas >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo 5. Filtrar por: project, scan_type, risk_level >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo. >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo QUERIES ÚTILES ELASTICSEARCH: >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo ============================== >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo Alertas por riesgo: >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo GET ${ELASTIC_INDEX}-*/_search?q=build_number:${BUILD_NUMBER} >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo. >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo Agregación por tipo de scan: >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo GET ${ELASTIC_INDEX}-*/_search -d "{\\"aggs\\":{\\"scan_types\\":{\\"terms\\":{\\"field\\":\\"scan_type\\"}}}}" >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo. >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo COMANDOS DE GESTIÓN: >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo ================== >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo Detener ELK Stack: >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo cd ${ELK_DIR} ^&^& docker-compose -f docker-compose-elk.yml down >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo. >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo Reiniciar ELK Stack: >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo cd ${ELK_DIR} ^&^& docker-compose -f docker-compose-elk.yml restart >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo. >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo Ver logs de servicios: >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo docker logs elasticsearch >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo docker logs kibana >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo docker logs logstash >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo. >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo BENEFICIOS DE ELASTIC STACK: >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo ============================ >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo ✅ Centralización de datos de seguridad >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo ✅ Búsquedas rápidas y flexibles >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo ✅ Visualizaciones personalizables >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo ✅ Alertas automáticas configurables >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo ✅ Tendencias históricas de seguridad >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo ✅ Correlación entre diferentes scans >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo ✅ Métricas de mejora continua >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo. >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo ✅ PIPELINE ELK COMPLETADO EXITOSAMENTE >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo 🚀 DATOS DE SEGURIDAD DISPONIBLES EN KIBANA >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                    """
+                }
+            }
+        }
+        
+        stage('Create Kibana Dashboard Export') {
+            when {
+                expression { env.KIBANA_OK == 'true' }
+            }
+            steps {
+                script {
+                    echo "Creando configuración de dashboard para importar en Kibana..."
+                    
+                    bat """
+                        echo { > ${REPORTS_DIR}\\kibana-dashboard-config.json
+                        echo   "objects": [ >> ${REPORTS_DIR}\\kibana-dashboard-config.json
+                        echo     { >> ${REPORTS_DIR}\\kibana-dashboard-config.json
+                        echo       "id": "prestabanco-security-overview", >> ${REPORTS_DIR}\\kibana-dashboard-config.json
+                        echo       "type": "dashboard", >> ${REPORTS_DIR}\\kibana-dashboard-config.json
+                        echo       "attributes": { >> ${REPORTS_DIR}\\kibana-dashboard-config.json
+                        echo         "title": "PrestaBanco Security Overview", >> ${REPORTS_DIR}\\kibana-dashboard-config.json
+                        echo         "description": "Dashboard principal de seguridad para PrestaBanco", >> ${REPORTS_DIR}\\kibana-dashboard-config.json
+                        echo         "timeFieldName": "@timestamp" >> ${REPORTS_DIR}\\kibana-dashboard-config.json
+                        echo       } >> ${REPORTS_DIR}\\kibana-dashboard-config.json
+                        echo     } >> ${REPORTS_DIR}\\kibana-dashboard-config.json
+                        echo   ] >> ${REPORTS_DIR}\\kibana-dashboard-config.json
+                        echo } >> ${REPORTS_DIR}\\kibana-dashboard-config.json
+                    """
+                    
+                    // Crear archivo con queries útiles para Kibana
+                    bat """
+                        echo QUERIES ÚTILES PARA KIBANA > ${REPORTS_DIR}\\kibana-queries.txt
+                        echo ========================== >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo. >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo 1. VER ALERTAS DE ALTO RIESGO: >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo    risk_level:"High" >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo. >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo 2. FILTRAR POR TIPO DE SCAN: >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo    scan_type:"frontend_security" >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo    scan_type:"backend_security" >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo. >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo 3. VER EVOLUCIÓN POR BUILD: >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo    build_number:${BUILD_NUMBER} >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo. >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo 4. ALERTAS POR CWE: >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo    cwe_id:"CWE-79" (XSS) >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo    cwe_id:"CWE-89" (SQL Injection) >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo. >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo 5. BUSCAR POR NOMBRE DE ALERTA: >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo    alert_name:"Cross Site Scripting" >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo. >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo 6. RANGO DE TIEMPO PERSONALIZADO: >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo    @timestamp:[now-1d TO now] >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo    @timestamp:[now-1w TO now] >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo. >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo VISUALIZACIONES RECOMENDADAS: >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo ================================ >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo 1. Pie Chart: Distribución por risk_level >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo 2. Bar Chart: Alertas por scan_type >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo 3. Line Chart: Tendencia de alertas por tiempo >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo 4. Data Table: Top 10 alertas más frecuentes >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo 5. Heatmap: Alertas por día y hora >> ${REPORTS_DIR}\\kibana-queries.txt
+                        echo 6. Metric: Conteo total de alertas >> ${REPORTS_DIR}\\kibana-queries.txt
+                    """
+                }
+            }
+        }
+        
+        stage('Cleanup Temporary Files') {
+            steps {
+                script {
+                    try {
+                        bat '''
+                            cd %cd%\\''' + "${REPORTS_DIR}" + '''
+                            if exist *.xml del *.xml
+                            if exist *.yaml del *.yaml
+                            if exist *.yml del *.yml
+                        '''
+                        echo "Archivos temporales eliminados - manteniendo reportes principales y datos ELK"
+                    } catch (Exception e) {
+                        echo "No hay archivos temporales para eliminar"
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                archiveArtifacts artifacts: "${REPORTS_DIR}/**", allowEmptyArchive: true
+                archiveArtifacts artifacts: "${ELK_DIR}/**", allowEmptyArchive: true
+                
+                echo """
+                ===============================================
+                   PRESTABANCO + ELASTIC STACK PIPELINE
+                ===============================================
+                
+                🎯 SERVICIOS DESPLEGADOS:
+                   Frontend:      ${env.FRONTEND_OK == 'true' ? '✅ ACTIVO' : '❌ INACTIVO'} - ${FRONTEND_URL}
+                   Backend:       ${env.BACKEND_OK == 'true' ? '✅ ACTIVO' : '❌ INACTIVO'} - ${BACKEND_URL}
+                   Elasticsearch: ${env.ELASTIC_OK == 'true' ? '✅ ACTIVO' : '❌ INACTIVO'} - ${ELASTICSEARCH_URL}
+                   Kibana:        ${env.KIBANA_OK == 'true' ? '✅ ACTIVO' : '❌ INACTIVO'} - ${KIBANA_URL}
+                
+                📊 ELASTIC STACK URLS:
+                   🔍 Elasticsearch: ${ELASTICSEARCH_URL}
+                   📈 Kibana:        ${KIBANA_URL}
+                   📋 Index:         ${ELASTIC_INDEX}-*
+                
+                📁 REPORTES GENERADOS:
+                   📄 REPORTE-COMPLETO.txt (guía completa)
+                   🌐 frontend-report.html (visual)
+                   🌐 backend-report.html (visual)
+                   💾 frontend-report.json (datos ELK)
+                   💾 backend-report.json (datos ELK)
+                   📊 elasticsearch-summary.json (métricas)
+                   🔧 kibana-dashboard-config.json (configuración)
+                   📝 kibana-queries.txt (queries útiles)
+                
+                🔗 ACCESO JENKINS: ${BUILD_URL}artifact/${REPORTS_DIR}/
+                
+                🚀 PRÓXIMOS PASOS:
+                   1. Abrir Kibana: ${KIBANA_URL}
+                   2. Ir a "Discover" 
+                   3. Seleccionar index: ${ELASTIC_INDEX}-*
+                   4. Explorar datos de seguridad
+                   5. Crear visualizaciones personalizadas
+                
+                💡 BENEFICIOS ELK:
+                   ✅ Datos centralizados de seguridad
+                   ✅ Búsquedas rápidas y flexibles
+                   ✅ Visualizaciones interactivas
+                   ✅ Historial de builds anteriores
+                   ✅ Correlación entre frontend/backend
+                   ✅ Alertas configurables
+                   ✅ Métricas de tendencias
+                
+                🎮 COMANDOS ÚTILES:
+                   Ver datos: GET ${ELASTICSEARCH_URL}/${ELASTIC_INDEX}-*/_search
+                   Parar ELK: cd ${ELK_DIR} && docker-compose -f docker-compose-elk.yml down
+                ===============================================
+                """
+            }
+        }
+        success {
+            echo "🎉 Pipeline ELK completado exitosamente! Datos disponibles en Kibana: ${KIBANA_URL}"
+        }
+        unstable {
+            echo "⚠️ Pipeline completado con warnings - revisar servicios ELK"
+        }
+        failure {
+            echo "❌ Pipeline falló - revisar configuración de Elastic Stack"
+        }
+    }
+}INDEX}-*/_search?q=risk_level:High >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo. >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo Alertas por build: >> ${REPORTS_DIR}\\REPORTE-COMPLETO.txt
+                        echo GET ${ELASTIC_
