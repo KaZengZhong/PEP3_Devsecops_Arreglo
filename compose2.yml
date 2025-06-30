@@ -11,6 +11,12 @@ services:
       - backend
     networks:
       - app-network
+    # Agregar logging driver para mejor captura
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # Backend service
   backend:
@@ -29,6 +35,12 @@ services:
       - postgres
     networks:
       - app-network
+    # Agregar logging driver
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # PostgreSQL 
   postgres:
@@ -45,7 +57,7 @@ services:
     networks:
       - app-network
 
-  # Elasticsearch - Tu configuración que funciona + mejoras
+  # Elasticsearch - Configuración simple
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
     container_name: elasticsearch-1
@@ -54,21 +66,14 @@ services:
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
       - xpack.security.enabled=false
       - xpack.security.enrollment.enabled=false
-      - cluster.routing.allocation.disk.threshold_enabled=false
     ports:
       - "9200:9200"
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
     networks:
       - app-network
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
 
-  # Kibana - Tu configuración que funciona + mejoras
+  # Kibana - Dashboard web
   kibana:
     image: docker.elastic.co/kibana/kibana:8.11.0
     container_name: kibana-1
@@ -76,21 +81,12 @@ services:
       - "5601:5601"
     environment:
       ELASTICSEARCH_HOSTS: http://elasticsearch:9200
-      SERVER_NAME: kibana
-      SERVER_PUBLICBASEURL: http://localhost:5601
     depends_on:
-      elasticsearch:
-        condition: service_healthy
+      - elasticsearch
     networks:
       - app-network
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
-      interval: 30s
-      timeout: 15s
-      retries: 5
-      start_period: 120s
 
-  # Logstash - Configuración mejorada pero manteniendo tu versión
+  # Logstash - Sin archivos de configuración externos
   logstash:
     image: docker.elastic.co/logstash/logstash:8.11.0
     container_name: logstash-1
@@ -98,24 +94,23 @@ services:
       - "5044:5044"
     environment:
       LS_JAVA_OPTS: "-Xmx256m -Xms256m"
-      PIPELINE_WORKERS: 1
     depends_on:
-      elasticsearch:
-        condition: service_healthy
+      - elasticsearch
     networks:
       - app-network
     command: >
       bash -c "
       echo 'input { 
         beats { port => 5044 }
-        tcp { port => 5000 codec => json }
       }
       filter {
         if [docker][container][name] {
-          mutate { add_field => { \"service_name\" => \"%{[docker][container][name]}\" } }
+          mutate { add_field => { \"container_name\" => \"%{[docker][container][name]}\" } }
+        }
+        if [message] {
+          mutate { add_field => { \"log_message\" => \"%{[message]}\" } }
         }
         mutate { add_field => { \"application\" => \"prestabanco\" } }
-        mutate { add_field => { \"environment\" => \"security-scan\" } }
       }
       output {
         elasticsearch {
@@ -127,7 +122,7 @@ services:
       /usr/local/bin/docker-entrypoint
       "
 
-  # Filebeat - Mejorado para mejor recolección de logs
+  # Filebeat - Configuración simplificada SIN errores YAML
   filebeat:
     image: docker.elastic.co/beats/filebeat:8.11.0
     container_name: filebeat-1
@@ -136,37 +131,31 @@ services:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - filebeat_data:/usr/share/filebeat/data
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - LOGSTASH_HOSTS=logstash:5044
     depends_on:
-      logstash:
-        condition: service_started
+      - logstash
     networks:
       - app-network
+    # Configuración más simple sin YAML complejo
     command: >
-      bash -c "
-      echo 'filebeat.inputs:
+      sh -c "
+      cat > /usr/share/filebeat/filebeat.yml <<EOF
+      filebeat.inputs:
       - type: container
-        paths: [\"/var/lib/docker/containers/*/*.log\"]
+        paths:
+          - '/var/lib/docker/containers/*/*.log'
         processors:
         - add_docker_metadata:
-            host: \"unix:///var/run/docker.sock\"
-        - decode_json_fields:
-            fields: [\"message\"]
-            target: \"\"
-            overwrite_keys: true
-        - drop_event:
-            when:
-              or:
-                - contains:
-                    docker.container.name: \"filebeat\"
-                - contains:
-                    docker.container.name: \"logstash\"
-                - contains:
-                    docker.container.name: \"elasticsearch\"
+            host: 'unix:///var/run/docker.sock'
+
       output.logstash:
-        hosts: [\"logstash:5044\"]
+        hosts: ['logstash:5044']
+
       logging.level: info
-      logging.to_files: false' > /usr/share/filebeat/filebeat.yml &&
-      filebeat -e
+      EOF
+      && filebeat -e
       "
 
 networks:
