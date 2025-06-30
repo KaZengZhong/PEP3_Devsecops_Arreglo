@@ -1,21 +1,27 @@
 version: '3.8'
 
 services:
-  # Frontend service
+  # === APLICACIONES PRESTABANCO ===
+  
   frontend:
     image: kahaozeng/prestabanco-frontend:latest
-    container_name: frontend-1
+    container_name: prestabanco-frontend
     ports:
       - "8070:80"
     depends_on:
       - backend
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://localhost:12201"
+        tag: "prestabanco-frontend"
     networks:
       - app-network
+    restart: unless-stopped
 
-  # Backend service
   backend:
     image: kahaozeng/prestabanco-backend:latest
-    container_name: backend-1
+    container_name: prestabanco-backend
     environment:
       DB_HOST: postgres
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/prestabanco
@@ -23,17 +29,24 @@ services:
       SPRING_DATASOURCE_PASSWORD: admin
       SPRING_JPA_SHOW_SQL: "true"
       SPRING_JPA_HIBERNATE_DDL_AUTO: "update"
+      LOGGING_LEVEL_ROOT: INFO
     ports:
       - "8090:8090"
     depends_on:
       - postgres
+      - graylog
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://localhost:12201"
+        tag: "prestabanco-backend"
     networks:
       - app-network
+    restart: unless-stopped
 
-  # PostgreSQL 
   postgres:
     image: postgres:latest
-    container_name: postgres-1
+    container_name: prestabanco-postgres
     environment:
       POSTGRES_DB: prestabanco
       POSTGRES_USER: postgres
@@ -41,14 +54,72 @@ services:
     ports:
       - "0.0.0.0:5433:5432"
     volumes:
-      - postgres:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://localhost:12201"
+        tag: "prestabanco-postgres"
     networks:
       - app-network
+    restart: unless-stopped
+
+  # === STACK GRAYLOG (MÍNIMO) ===
+  
+  mongo:
+    image: mongo:4.2
+    container_name: graylog-mongo
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch-oss:7.10.2
+    container_name: graylog-elasticsearch
+    environment:
+      - http.host=0.0.0.0
+      - transport.host=localhost
+      - network.host=0.0.0.0
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - discovery.type=single-node
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  graylog:
+    image: graylog/graylog:4.3
+    container_name: graylog-server
+    environment:
+      - GRAYLOG_PASSWORD_SECRET=somepasswordpepper
+      - GRAYLOG_ROOT_PASSWORD_SHA2=8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918
+      - GRAYLOG_HTTP_EXTERNAL_URI=http://localhost:9000/
+      - GRAYLOG_ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - GRAYLOG_MONGODB_URI=mongodb://mongo/graylog
+      - GRAYLOG_ROOT_TIMEZONE=America/Santiago
+    entrypoint: /usr/bin/tini -- wait-for-it elasticsearch:9200 -- /docker-entrypoint.sh
+    networks:
+      - app-network
+    restart: unless-stopped
+    depends_on:
+      - mongo
+      - elasticsearch
+    ports:
+      - "9000:9000"   # Web interface
+      - "12201:12201" # GELF UDP
+      - "1514:1514"   # Syslog UDP
 
 networks:
   app-network:
     driver: bridge
 
 volumes:
-  postgres:
-    external: true
+  postgres_data:
+    driver: local
+  mongo_data:
+    driver: local
+  es_data:
+    driver: local

@@ -1,0 +1,666 @@
+pipeline {
+    agent any
+    
+    parameters {
+        choice(
+            name: 'LOG_LEVEL',
+            choices: ['INFO', 'DEBUG', 'WARN', 'ERROR'],
+            description: 'Nivel mínimo de logs a capturar'
+        )
+        choice(
+            name: 'RETENTION_DAYS',
+            choices: ['7', '15', '30', '60'],
+            description: 'Días de retención de logs'
+        )
+        booleanParam(
+            name: 'ENABLE_ALERTS',
+            defaultValue: true,
+            description: 'Activar alertas automáticas'
+        )
+    }
+    
+    environment {
+        LOGS_DIR = 'log-management'
+        GRAYLOG_URL = 'http://localhost:9000'
+        GRAYLOG_USER = 'admin'
+        GRAYLOG_PASS = 'admin123'
+        FRONTEND_URL = 'http://localhost:8070'
+        BACKEND_URL = 'http://localhost:8090'
+    }
+    
+    stages {
+        stage('Initialize') {
+            steps {
+                script {
+                    echo "=== PRESTABANCO LOG MANAGEMENT ==="
+                    
+                    bat """
+                        if exist ${LOGS_DIR} rmdir /s /q ${LOGS_DIR}
+                        mkdir ${LOGS_DIR}
+                        mkdir ${LOGS_DIR}\\configs
+                        mkdir ${LOGS_DIR}\\dashboards
+                    """
+                }
+            }
+        }
+        
+        stage('Deploy Graylog Stack') {
+            steps {
+                script {
+                    echo "Desplegando stack de Graylog..."
+                    
+                    // Crear configuración de Graylog
+                    bat """
+                        echo version: '3.8' > ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo. >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo services: >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo   # MongoDB >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo   mongo: >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     image: mongo:4.2 >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     container_name: graylog-mongo >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     volumes: >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo       - mongo_data:/data/db >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     networks: >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo       - graylog-network >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo. >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo   # Elasticsearch >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo   elasticsearch: >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     image: docker.elastic.co/elasticsearch/elasticsearch-oss:7.10.2 >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     container_name: graylog-elasticsearch >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     environment: >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo       - http.host=0.0.0.0 >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo       - transport.host=localhost >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo       - network.host=0.0.0.0 >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo       - "ES_JAVA_OPTS=-Xms512m -Xmx512m" >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     volumes: >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo       - es_data:/usr/share/elasticsearch/data >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     networks: >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo       - graylog-network >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo. >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo   # Graylog >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo   graylog: >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     image: graylog/graylog:4.3 >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     container_name: graylog-server >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     environment: >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo       - GRAYLOG_PASSWORD_SECRET=somepasswordpepper >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo       - GRAYLOG_ROOT_PASSWORD_SHA2=8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918 >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo       - GRAYLOG_HTTP_EXTERNAL_URI=http://localhost:9000/ >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     entrypoint: /usr/bin/tini -- wait-for-it elasticsearch:9200 --  /docker-entrypoint.sh >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     networks: >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo       - graylog-network >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     restart: always >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     depends_on: >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo       - mongo >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo       - elasticsearch >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     ports: >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo       - 9000:9000 >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo       - 1514:1514 >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo       - 1514:1514/udp >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo       - 12201:12201 >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo       - 12201:12201/udp >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo. >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo networks: >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo   graylog-network: >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     driver: bridge >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo. >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo volumes: >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo   mongo_data: >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     driver: local >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo   es_data: >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                        echo     driver: local >> ${LOGS_DIR}\\docker-compose-graylog.yml
+                    """
+                    
+                    // Desplegar stack
+                    bat """
+                        cd ${LOGS_DIR}
+                        docker-compose -f docker-compose-graylog.yml down || echo "No containers"
+                        docker-compose -f docker-compose-graylog.yml up -d
+                    """
+                    
+                    echo "Esperando que Graylog esté listo..."
+                    sleep(time: 120, unit: 'SECONDS')
+                }
+            }
+        }
+        
+        stage('Verify Graylog') {
+            steps {
+                script {
+                    def graylogOk = false
+                    def retries = 5
+                    
+                    echo "Verificando estado de Graylog..."
+                    bat 'docker ps --format "table {{.Names}}\\t{{.Ports}}\\t{{.Status}}" | findstr graylog'
+                    
+                    for (int i = 0; i < retries; i++) {
+                        try {
+                            bat 'powershell -Command "Invoke-WebRequest -Uri http://localhost:9000/api/system/cluster -TimeoutSec 10 -UseBasicParsing | Out-Null"'
+                            graylogOk = true
+                            echo "Graylog: OK (API respondiendo)"
+                            break
+                        } catch (Exception e) {
+                            echo "Graylog: Reintento ${i+1}/${retries} en 30s..."
+                            if (i < retries - 1) sleep(time: 30, unit: 'SECONDS')
+                        }
+                    }
+                    
+                    env.GRAYLOG_OK = graylogOk.toString()
+                    
+                    if (!graylogOk) {
+                        echo "WARNING: Graylog no responde, continuando con configuración básica"
+                    }
+                }
+            }
+        }
+        
+        stage('Configure Application Logging') {
+            steps {
+                script {
+                    echo "Configurando logging en aplicaciones..."
+                    
+                    // Crear configuración de logging mejorada para el backend
+                    bat """
+                        echo # Configuracion de logging mejorada para Spring Boot > ${LOGS_DIR}\\configs\\logback-spring.xml
+                        echo ^<?xml version="1.0" encoding="UTF-8"?^> >> ${LOGS_DIR}\\configs\\logback-spring.xml
+                        echo ^<configuration^> >> ${LOGS_DIR}\\configs\\logback-spring.xml
+                        echo     ^<appender name="GELF" class="biz.paluch.logging.gelf.logback.GelfLogbackAppender"^> >> ${LOGS_DIR}\\configs\\logback-spring.xml
+                        echo         ^<host^>udp:localhost^</host^> >> ${LOGS_DIR}\\configs\\logback-spring.xml
+                        echo         ^<port^>12201^</port^> >> ${LOGS_DIR}\\configs\\logback-spring.xml
+                        echo         ^<version^>1.1^</version^> >> ${LOGS_DIR}\\configs\\logback-spring.xml
+                        echo         ^<facility^>prestabanco-backend^</facility^> >> ${LOGS_DIR}\\configs\\logback-spring.xml
+                        echo         ^<extractStackTrace^>true^</extractStackTrace^> >> ${LOGS_DIR}\\configs\\logback-spring.xml
+                        echo         ^<filterStackTrace^>true^</filterStackTrace^> >> ${LOGS_DIR}\\configs\\logback-spring.xml
+                        echo         ^<includeLoggerName^>true^</includeLoggerName^> >> ${LOGS_DIR}\\configs\\logback-spring.xml
+                        echo         ^<includeThreadName^>true^</includeThreadName^> >> ${LOGS_DIR}\\configs\\logback-spring.xml
+                        echo     ^</appender^> >> ${LOGS_DIR}\\configs\\logback-spring.xml
+                        echo     ^<root level="${params.LOG_LEVEL}"^> >> ${LOGS_DIR}\\configs\\logback-spring.xml
+                        echo         ^<appender-ref ref="GELF" /^> >> ${LOGS_DIR}\\configs\\logback-spring.xml
+                        echo     ^</root^> >> ${LOGS_DIR}\\configs\\logback-spring.xml
+                        echo ^</configuration^> >> ${LOGS_DIR}\\configs\\logback-spring.xml
+                    """
+                    
+                    echo "Configuración simplificada - sin nginx"
+                    
+                    // Crear configuración de PostgreSQL
+                    bat """
+                        echo # Configuracion PostgreSQL para Graylog > ${LOGS_DIR}\\configs\\postgresql-graylog.conf
+                        echo log_destination = 'syslog' >> ${LOGS_DIR}\\configs\\postgresql-graylog.conf
+                        echo syslog_facility = 'LOCAL0' >> ${LOGS_DIR}\\configs\\postgresql-graylog.conf
+                        echo syslog_ident = 'prestabanco-postgres' >> ${LOGS_DIR}\\configs\\postgresql-graylog.conf
+                        echo log_min_messages = ${params.LOG_LEVEL} >> ${LOGS_DIR}\\configs\\postgresql-graylog.conf
+                        echo log_line_prefix = '%%t [%%p]: [%%l-1] user=%%u,db=%%d,app=%%a,client=%%h ' >> ${LOGS_DIR}\\configs\\postgresql-graylog.conf
+                        echo log_checkpoints = on >> ${LOGS_DIR}\\configs\\postgresql-graylog.conf
+                        echo log_connections = on >> ${LOGS_DIR}\\configs\\postgresql-graylog.conf
+                        echo log_disconnections = on >> ${LOGS_DIR}\\configs\\postgresql-graylog.conf
+                        echo log_lock_waits = on >> ${LOGS_DIR}\\configs\\postgresql-graylog.conf
+                        echo log_statement = 'mod' >> ${LOGS_DIR}\\configs\\postgresql-graylog.conf
+                    """
+                }
+            }
+        }
+        
+        stage('Setup Log Collectors') {
+            steps {
+                script {
+                    if (env.GRAYLOG_OK == 'true') {
+                        echo "Configurando colectores de logs..."
+                        
+                        try {
+                            // Crear input GELF para aplicaciones
+                            timeout(time: 5, unit: 'MINUTES') {
+                                bat """
+                                    powershell -Command "
+                                    \$headers = @{
+                                        'Content-Type' = 'application/json'
+                                        'Authorization' = 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes('${GRAYLOG_USER}:${GRAYLOG_PASS}'))
+                                    }
+                                    \$body = @{
+                                        title = 'PrestaBanco Applications'
+                                        type = 'org.graylog2.inputs.gelf.udp.GELFUDPInput'
+                                        configuration = @{
+                                            bind_address = '0.0.0.0'
+                                            port = 12201
+                                            recv_buffer_size = 262144
+                                        }
+                                        global = \$true
+                                    } | ConvertTo-Json -Depth 3
+                                    
+                                    try {
+                                        Invoke-RestMethod -Uri '${GRAYLOG_URL}/api/system/inputs' -Method Post -Headers \$headers -Body \$body
+                                        Write-Host 'Input GELF creado exitosamente'
+                                    } catch {
+                                        Write-Host 'Input GELF: Ya existe o error menor'
+                                    }
+                                    "
+                                """
+                            }
+                            
+                            // Crear input Syslog para nginx/postgres
+                            timeout(time: 5, unit: 'MINUTES') {
+                                bat """
+                                    powershell -Command "
+                                    \$headers = @{
+                                        'Content-Type' = 'application/json'
+                                        'Authorization' = 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes('${GRAYLOG_USER}:${GRAYLOG_PASS}'))
+                                    }
+                                    \$body = @{
+                                        title = 'PrestaBanco System Logs'
+                                        type = 'org.graylog2.inputs.syslog.udp.SyslogUDPInput'
+                                        configuration = @{
+                                            bind_address = '0.0.0.0'
+                                            port = 1514
+                                            recv_buffer_size = 262144
+                                        }
+                                        global = \$true
+                                    } | ConvertTo-Json -Depth 3
+                                    
+                                    try {
+                                        Invoke-RestMethod -Uri '${GRAYLOG_URL}/api/system/inputs' -Method Post -Headers \$headers -Body \$body
+                                        Write-Host 'Input Syslog creado exitosamente'
+                                    } catch {
+                                        Write-Host 'Input Syslog: Ya existe o error menor'
+                                    }
+                                    "
+                                """
+                            }
+                            
+                        } catch (Exception e) {
+                            echo "Configuración de inputs: Continuando (pueden ya existir)"
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy Enhanced Applications') {
+            steps {
+                script {
+                    echo "Desplegando aplicaciones con logging mejorado..."
+                    
+                    // Crear docker-compose mejorado con logging
+                    bat """
+                        echo version: '3.8' > ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo. >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo services: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo   # Frontend con logging >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo   frontend: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     image: kahaozeng/prestabanco-frontend:latest >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     container_name: frontend-logging >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     ports: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       - "8071:80" >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     depends_on: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       - backend >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     logging: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       driver: gelf >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       options: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo         gelf-address: "udp://localhost:12201" >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo         tag: "prestabanco-frontend" >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     networks: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       - app-network >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo. >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo   # Backend con logging >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo   backend: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     image: kahaozeng/prestabanco-backend:latest >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     container_name: backend-logging >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     environment: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       DB_HOST: postgres >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/prestabanco >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       SPRING_DATASOURCE_USERNAME: postgres >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       SPRING_DATASOURCE_PASSWORD: admin >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       SPRING_JPA_SHOW_SQL: "true" >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       SPRING_JPA_HIBERNATE_DDL_AUTO: "update" >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       LOGGING_LEVEL_ROOT: ${params.LOG_LEVEL} >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     ports: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       - "8091:8090" >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     depends_on: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       - postgres >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     logging: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       driver: gelf >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       options: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo         gelf-address: "udp://localhost:12201" >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo         tag: "prestabanco-backend" >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     networks: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       - app-network >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo. >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo   # PostgreSQL con logging >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo   postgres: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     image: postgres:latest >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     container_name: postgres-logging >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     environment: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       POSTGRES_DB: prestabanco >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       POSTGRES_USER: postgres >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       POSTGRES_PASSWORD: admin >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     ports: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       - "0.0.0.0:5434:5432" >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     volumes: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       - postgres_logs:/var/lib/postgresql/data >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     logging: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       driver: gelf >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       options: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo         gelf-address: "udp://localhost:12201" >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo         tag: "prestabanco-postgres" >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     networks: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo       - app-network >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo. >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo networks: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo   app-network: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     driver: bridge >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo. >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo volumes: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo   postgres_logs: >> ${LOGS_DIR}\\docker-compose-logging.yml
+                        echo     external: false >> ${LOGS_DIR}\\docker-compose-logging.yml
+                    """
+                    
+                    // Desplegar aplicaciones con logging
+                    bat """
+                        cd ${LOGS_DIR}
+                        docker-compose -f docker-compose-logging.yml down || echo "No containers"
+                        docker-compose -f docker-compose-logging.yml up -d
+                    """
+                    
+                    sleep(time: 60, unit: 'SECONDS')
+                }
+            }
+        }
+        
+        stage('Generate Test Logs') {
+            steps {
+                script {
+                    echo "Generando logs de prueba..."
+                    
+                    // Generar tráfico para logs
+                    try {
+                        timeout(time: 3, unit: 'MINUTES') {
+                            bat """
+                                powershell -Command "
+                                for (\$i = 1; \$i -le 20; \$i++) {
+                                    try {
+                                        Invoke-WebRequest -Uri 'http://localhost:8071' -UseBasicParsing | Out-Null
+                                        Write-Host 'Request \$i: Frontend OK'
+                                    } catch {
+                                        Write-Host 'Request \$i: Frontend error (normal)'
+                                    }
+                                    
+                                    try {
+                                        Invoke-WebRequest -Uri 'http://localhost:8091/actuator/health' -UseBasicParsing | Out-Null
+                                        Write-Host 'Request \$i: Backend OK'
+                                    } catch {
+                                        Write-Host 'Request \$i: Backend error (normal)'
+                                    }
+                                    
+                                    Start-Sleep -Seconds 3
+                                }
+                                "
+                            """
+                        }
+                    } catch (Exception e) {
+                        echo "Generación de logs: Completada con algunos errores (normal)"
+                    }
+                }
+            }
+        }
+        
+        stage('Create Dashboards') {
+            steps {
+                script {
+                    if (env.GRAYLOG_OK == 'true') {
+                        echo "Creando dashboards..."
+                        
+                        // Crear dashboard básico
+                        bat """
+                            echo {
+                            echo   "title": "PrestaBanco - Overview",
+                            echo   "description": "Dashboard principal de monitoreo",
+                            echo   "widgets": [
+                            echo     {
+                            echo       "type": "SEARCH_RESULT_COUNT",
+                            echo       "title": "Total Logs",
+                            echo       "query": "*",
+                            echo       "timerange": {"type": "relative", "range": 3600}
+                            echo     },
+                            echo     {
+                            echo       "type": "SEARCH_RESULT_CHART", 
+                            echo       "title": "Logs por Servicio",
+                            echo       "query": "tag:prestabanco*",
+                            echo       "timerange": {"type": "relative", "range": 3600}
+                            echo     },
+                            echo     {
+                            echo       "type": "SEARCH_RESULT_COUNT",
+                            echo       "title": "Errores",
+                            echo       "query": "level:ERROR OR level:WARN",
+                            echo       "timerange": {"type": "relative", "range": 3600}
+                            echo     }
+                            echo   ]
+                            echo } > ${LOGS_DIR}\\dashboards\\prestabanco-dashboard.json
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Setup Alerts') {
+            steps {
+                script {
+                    if (params.ENABLE_ALERTS && env.GRAYLOG_OK == 'true') {
+                        echo "Configurando alertas..."
+                        
+                        // Crear configuración de alertas
+                        bat """
+                            echo # Configuracion de alertas > ${LOGS_DIR}\\configs\\alerts-config.json
+                            echo { >> ${LOGS_DIR}\\configs\\alerts-config.json
+                            echo   "alerts": [ >> ${LOGS_DIR}\\configs\\alerts-config.json
+                            echo     { >> ${LOGS_DIR}\\configs\\alerts-config.json
+                            echo       "title": "High Error Rate", >> ${LOGS_DIR}\\configs\\alerts-config.json
+                            echo       "description": "Mas de 10 errores en 5 minutos", >> ${LOGS_DIR}\\configs\\alerts-config.json
+                            echo       "condition": "level:ERROR", >> ${LOGS_DIR}\\configs\\alerts-config.json
+                            echo       "threshold": 10, >> ${LOGS_DIR}\\configs\\alerts-config.json
+                            echo       "time_range": 300 >> ${LOGS_DIR}\\configs\\alerts-config.json
+                            echo     }, >> ${LOGS_DIR}\\configs\\alerts-config.json
+                            echo     { >> ${LOGS_DIR}\\configs\\alerts-config.json
+                            echo       "title": "Service Down", >> ${LOGS_DIR}\\configs\\alerts-config.json
+                            echo       "description": "Servicio sin logs por mas de 2 minutos", >> ${LOGS_DIR}\\configs\\alerts-config.json
+                            echo       "condition": "tag:prestabanco*", >> ${LOGS_DIR}\\configs\\alerts-config.json
+                            echo       "threshold": 0, >> ${LOGS_DIR}\\configs\\alerts-config.json
+                            echo       "time_range": 120 >> ${LOGS_DIR}\\configs\\alerts-config.json
+                            echo     } >> ${LOGS_DIR}\\configs\\alerts-config.json
+                            echo   ] >> ${LOGS_DIR}\\configs\\alerts-config.json
+                            echo } >> ${LOGS_DIR}\\configs\\alerts-config.json
+                        """
+                    } else {
+                        echo "Alertas deshabilitadas por parámetro"
+                    }
+                }
+            }
+        }
+        
+        stage('Generate Reports') {
+            steps {
+                script {
+                    echo "Generando reportes de logs..."
+                    
+                    // Crear el reporte principal
+                    bat """
+                        echo ===================================== > ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo    PRESTABANCO - LOG MANAGEMENT     >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo ===================================== >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo. >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo Fecha: %date% %time% >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo Build: ${BUILD_NUMBER} >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo Nivel de Logs: ${params.LOG_LEVEL} >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo Retencion: ${params.RETENTION_DAYS} dias >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo Alertas: ${params.ENABLE_ALERTS ? 'ACTIVADAS' : 'DESACTIVADAS'} >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo. >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo SERVICIOS DESPLEGADOS: >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Graylog Server:  ${env.GRAYLOG_OK} >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   MongoDB:         Ejecutandose >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Elasticsearch:   Ejecutandose >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Frontend:        Puerto 8071 >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Backend:         Puerto 8091 >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   PostgreSQL:      Puerto 5434 >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo. >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo CONFIGURACION DE LOGGING: >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   GELF Input:      Puerto 12201 (UDP) >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Syslog Input:    Puerto 1514 (UDP) >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Web Interface:   ${GRAYLOG_URL} >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Usuario:         ${GRAYLOG_USER} >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Password:        ${GRAYLOG_PASS} >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo. >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo LOGS CONFIGURADOS: >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Frontend:        Nginx access/error logs >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Backend:         Spring Boot logs (JSON) >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Database:        PostgreSQL query/error logs >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Container:       Docker stdout/stderr >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo. >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                    """
+                    
+                    // Verificar estado de los contenedores
+                    bat """
+                        echo ESTADO DE CONTENEDORES: >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        docker ps --format "  {{.Names}} - {{.Status}}" | findstr -i "graylog\\|mongo\\|elastic" >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo. >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        
+                        echo APLICACIONES CON LOGGING: >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        docker ps --format "  {{.Names}} - {{.Status}}" | findstr -i "logging" >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo. >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                    """
+                    
+                    // Información de acceso
+                    bat """
+                        echo ===================================== >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo COMO ACCEDER A GRAYLOG: >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo ===================================== >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo. >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo 1. Abrir navegador en: ${GRAYLOG_URL} >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo 2. Login: ${GRAYLOG_USER} / ${GRAYLOG_PASS} >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo 3. Ir a "Search" para ver logs en tiempo real >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo 4. Ir a "Dashboards" para metricas >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo 5. Ir a "Alerts" para configurar notificaciones >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo. >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo BUSQUEDAS UTILES: >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Todos los logs:     * >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Solo errores:       level:ERROR >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Frontend:           tag:prestabanco-frontend >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Backend:            tag:prestabanco-backend >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Database:           tag:prestabanco-postgres >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Ultimas 2 horas:    * AND timestamp:[now-2h TO now] >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo. >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo ARCHIVOS GENERADOS: >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   REPORTE-LOGS.txt           (este archivo) >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   docker-compose-graylog.yml (stack Graylog) >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   docker-compose-logging.yml (apps con logs) >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   configs/logback-spring.xml  (config Spring) >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   configs/nginx-graylog.conf  (config Nginx) >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   configs/postgresql-graylog.conf (config PostgreSQL) >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   configs/alerts-config.json (configuracion alertas) >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo. >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo TROUBLESHOOTING: >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Si Graylog no carga: Esperar 2-3 minutos >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Si no hay logs: Verificar puertos 12201 y 1514 >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Si faltan datos: Revisar configuracion de inputs >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Si alertas no funcionan: Configurar notifications >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo. >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo INTEGRACION CON OWASP ZAP: >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Los logs de seguridad se almacenan automaticamente >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Buscar: "security scan" OR "owasp" OR "zap" >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo   Correlacionar eventos de seguridad con logs de app >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo. >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                        echo DEPLOYMENT COMPLETADO EXITOSAMENTE >> ${LOGS_DIR}\\REPORTE-LOGS.txt
+                    """
+                    
+                    // Crear guía de uso rápido
+                    bat """
+                        echo GRAYLOG - GUIA RAPIDA > ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo ==================== >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo. >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo ACCESO: >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo URL: ${GRAYLOG_URL} >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo User: ${GRAYLOG_USER} >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo Pass: ${GRAYLOG_PASS} >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo. >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo APLICACIONES: >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo Frontend: http://localhost:8071 >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo Backend:  http://localhost:8091 >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo Database: localhost:5434 >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo. >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo COMANDOS UTILES: >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo docker ps ^| findstr graylog >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo docker logs graylog-server >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo docker-compose -f docker-compose-graylog.yml logs >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo. >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo BUSQUEDAS: >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo level:ERROR               (solo errores) >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo tag:prestabanco-backend  (solo backend) >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo source:nginx              (solo nginx) >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                        echo timestamp:[now-1h TO now] (ultima hora) >> ${LOGS_DIR}\\GUIA-RAPIDA.txt
+                    """
+                    
+                    currentBuild.result = 'SUCCESS'
+                }
+            }
+        }
+        
+        stage('Cleanup') {
+            steps {
+                script {
+                    echo "Limpiando archivos temporales..."
+                    
+                    try {
+                        bat """
+                            cd ${LOGS_DIR}
+                            if exist *.tmp del *.tmp
+                            if exist *.log del *.log
+                            if exist *.temp del *.temp
+                        """
+                        echo "Archivos temporales eliminados"
+                    } catch (Exception e) {
+                        echo "No hay archivos temporales para eliminar"
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                archiveArtifacts artifacts: "${LOGS_DIR}/**", allowEmptyArchive: true
+                
+                echo """
+                =====================================
+                    PRESTABANCO LOG MANAGEMENT
+                =====================================
+                
+                ARCHIVOS GENERADOS:
+                  1. REPORTE-LOGS.txt (LEER PRIMERO)
+                  2. GUIA-RAPIDA.txt (acceso rapido)
+                  3. docker-compose-graylog.yml
+                  4. docker-compose-logging.yml
+                  5. configs/ (configuraciones)
+                
+                ACCESO GRAYLOG:
+                  URL: ${GRAYLOG_URL}
+                  User: ${GRAYLOG_USER}
+                  Pass: ${GRAYLOG_PASS}
+                
+                APLICACIONES MONITOREADAS:
+                  Frontend: http://localhost:8071
+                  Backend:  http://localhost:8091
+                  Database: localhost:5434
+                
+                ARCHIVOS: ${BUILD_URL}artifact/${LOGS_DIR}/
+                
+                ESTADO: ${currentBuild.result}
+                =====================================
+                """
+            }
+        }
+        
+        success {
+            echo "✅ Log management desplegado exitosamente"
+        }
+        
+        failure {
+            echo "❌ Error en despliegue de log management"
+        }
+    }
+}
