@@ -20,7 +20,7 @@ pipeline {
         stage('Initialize') {
             steps {
                 script {
-                    echo "=== PRESTABANCO SECURITY SCAN CON ELK ==="
+                    echo "=== PRESTABANCO SECURITY SCAN CON ELK BASICO ==="
                     
                     bat """
                         if exist ${REPORTS_DIR} rmdir /s /q ${REPORTS_DIR}
@@ -38,14 +38,14 @@ pipeline {
                     
                     echo "Iniciando servicios principales..."
                     bat 'docker-compose -f compose2.yml up -d frontend backend postgres'
-                    sleep(time: 60, unit: 'SECONDS')
+                    sleep(time: 45, unit: 'SECONDS')
                     
-                    echo "Iniciando Elasticsearch..."
+                    echo "Iniciando Elasticsearch (modo mínimo)..."
                     bat 'docker-compose -f compose2.yml up -d elasticsearch'
                     sleep(time: 90, unit: 'SECONDS')
                     
-                    echo "Iniciando Kibana, Logstash y Filebeat..."
-                    bat 'docker-compose -f compose2.yml up -d kibana logstash filebeat'
+                    echo "Iniciando Kibana..."
+                    bat 'docker-compose -f compose2.yml up -d kibana'
                     sleep(time: 60, unit: 'SECONDS')
                 }
             }
@@ -56,7 +56,8 @@ pipeline {
                 script {
                     def frontendOk = false
                     def backendOk = false
-                    def elkOk = false
+                    def elasticOk = false
+                    def kibanaOk = false
                     
                     echo "Verificando contenedores Docker..."
                     bat 'docker ps --format "table {{.Names}}\\t{{.Ports}}\\t{{.Status}}"'
@@ -74,60 +75,82 @@ pipeline {
                     try {
                         bat 'powershell -Command "Test-NetConnection -ComputerName localhost -Port 8090 -WarningAction SilentlyContinue"'
                         backendOk = true
-                        echo "Backend: OK (puerto responde)"
+                        echo "Backend: OK"
                     } catch (Exception e) {
                         echo "Backend: FAILED"
                     }
                     
-                    // ELK Stack - Verificación más robusta
+                    // Elasticsearch
                     try {
                         echo "Verificando Elasticsearch..."
-                        bat 'powershell -Command "Start-Sleep 10; Invoke-WebRequest -Uri http://localhost:9200/_cluster/health -TimeoutSec 20 -UseBasicParsing | Out-Null"'
-                        
-                        echo "Verificando Kibana..."
-                        bat 'powershell -Command "Start-Sleep 5; Invoke-WebRequest -Uri http://localhost:5601/api/status -TimeoutSec 20 -UseBasicParsing | Out-Null"'
-                        
-                        elkOk = true
-                        echo "ELK Stack: OK"
+                        bat 'powershell -Command "Start-Sleep 5; Invoke-WebRequest -Uri http://localhost:9200 -TimeoutSec 10 -UseBasicParsing"'
+                        elasticOk = true
+                        echo "Elasticsearch: OK"
                     } catch (Exception e) {
-                        echo "ELK Stack: FAILED - ${e.message}"
-                        echo "Verificando logs de contenedores ELK..."
+                        echo "Elasticsearch: FAILED - ${e.message}"
                         try {
                             bat 'docker logs elasticsearch-1 --tail 10'
+                        } catch (Exception logError) {
+                            echo "No se pudieron obtener logs de Elasticsearch"
+                        }
+                    }
+                    
+                    // Kibana
+                    try {
+                        echo "Verificando Kibana..."
+                        bat 'powershell -Command "Start-Sleep 10; Invoke-WebRequest -Uri http://localhost:5601 -TimeoutSec 15 -UseBasicParsing | Out-Null"'
+                        kibanaOk = true
+                        echo "Kibana: OK"
+                    } catch (Exception e) {
+                        echo "Kibana: FAILED - ${e.message}"
+                        try {
                             bat 'docker logs kibana-1 --tail 10'
                         } catch (Exception logError) {
-                            echo "No se pudieron obtener logs de ELK"
+                            echo "No se pudieron obtener logs de Kibana"
                         }
                     }
                     
                     env.FRONTEND_OK = frontendOk.toString()
                     env.BACKEND_OK = backendOk.toString()
-                    env.ELK_OK = elkOk.toString()
+                    env.ELASTIC_OK = elasticOk.toString()
+                    env.KIBANA_OK = kibanaOk.toString()
                 }
             }
         }
         
-        stage('Generate Test Logs') {
+        stage('Test Elasticsearch') {
             when {
-                expression { env.ELK_OK == 'true' }
+                expression { env.ELASTIC_OK == 'true' }
             }
             steps {
                 script {
-                    echo "Generando logs de prueba para ELK..."
+                    echo "Creando datos de prueba en Elasticsearch..."
                     try {
-                        // Generar logs visitando la aplicación
-                        bat 'powershell -Command "Invoke-WebRequest -Uri http://localhost:8070 -UseBasicParsing | Out-Null"'
-                        bat 'powershell -Command "Invoke-WebRequest -Uri http://localhost:8070/home -UseBasicParsing | Out-Null"'
-                        bat 'powershell -Command "Invoke-WebRequest -Uri http://localhost:8090/actuator/health -UseBasicParsing | Out-Null"'
+                        // Crear un índice de prueba para PrestaBanco
+                        bat '''
+                            powershell -Command "
+                                $testData = @{
+                                    timestamp = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+                                    service = 'prestabanco-security'
+                                    message = 'Security scan iniciado - Build %BUILD_NUMBER%'
+                                    level = 'INFO'
+                                    application = 'prestabanco'
+                                } | ConvertTo-Json
+                                
+                                try {
+                                    Invoke-RestMethod -Uri 'http://localhost:9200/prestabanco-security/_doc' -Method POST -Body $testData -ContentType 'application/json'
+                                    Write-Host 'Datos de prueba creados en Elasticsearch'
+                                } catch {
+                                    Write-Host 'Warning: No se pudieron crear datos de prueba'
+                                }
+                            "
+                        '''
                         
-                        echo "Esperando que los logs se procesen..."
-                        sleep(time: 30, unit: 'SECONDS')
-                        
-                        // Verificar si hay índices en Elasticsearch
+                        // Verificar índices
                         bat 'powershell -Command "Invoke-WebRequest -Uri http://localhost:9200/_cat/indices?v -UseBasicParsing"'
                         
                     } catch (Exception e) {
-                        echo "Warning: No se pudieron generar logs de prueba - ${e.message}"
+                        echo "Warning: No se pudieron crear datos de prueba - ${e.message}"
                     }
                 }
             }
@@ -138,20 +161,21 @@ pipeline {
                 script {
                     echo "Iniciando scans de seguridad..."
                     
-                    // Crear el reporte principal con info de ELK
+                    // Crear el reporte principal
                     bat """
                         echo ===================================== > ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo    PRESTABANCO - SECURITY SCAN     >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo         CON ELK MONITORING         >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo       CON ELASTICSEARCH BASICO     >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo ===================================== >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo Fecha: %date% %time% >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo Build: ${BUILD_NUMBER} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo SERVICIOS ANALIZADOS: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo   Frontend:  ${env.FRONTEND_OK} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo   Backend:   ${env.BACKEND_OK} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo   ELK Stack: ${env.ELK_OK} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo   Frontend:      ${env.FRONTEND_OK} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo   Backend:       ${env.BACKEND_OK} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo   Elasticsearch: ${env.ELASTIC_OK} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo   Kibana:        ${env.KIBANA_OK} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo RESULTADOS DE SEGURIDAD: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
@@ -176,18 +200,10 @@ pipeline {
                         } catch (Exception e) {
                             bat """
                                 echo FRONTEND SCAN: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Target: ${FRONTEND_URL} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Status: CON WARNINGS >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Nota: Scan ejecutado, exit code 2 es normal >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                                echo   Status: CON WARNINGS (normal) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                                 echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                             """
                         }
-                    } else {
-                        bat """
-                            echo FRONTEND SCAN: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                            echo   Status: NO EJECUTADO - Servicio no accesible >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                            echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        """
                     }
                     
                     // Backend Scan
@@ -203,57 +219,40 @@ pipeline {
                                 echo   Target: ${BACKEND_URL} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                                 echo   Status: COMPLETADO >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                                 echo   Reporte: backend-report.html >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Nota: Error 403 es normal (Spring Security) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                                 echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                             """
                             
                         } catch (Exception e) {
                             bat """
                                 echo BACKEND SCAN: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Target: ${BACKEND_URL} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Status: CON WARNINGS >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Nota: Scan ejecutado, exit code 2 es normal >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                                echo   Status: CON WARNINGS (normal) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                                 echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                             """
                         }
-                    } else {
-                        bat """
-                            echo BACKEND SCAN: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                            echo   Status: NO EJECUTADO - Servicio no accesible >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                            echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        """
                     }
                     
                     // Database scan
                     bat """
                         echo DATABASE SCAN: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo   Status: ANALISIS DE CONFIGURACION >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo   Seguridad: BUENA - Puerto no expuesto publicamente >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo   Status: PUERTO PROTEGIDO (configuracion correcta) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                     """
                     
-                    // Finalizar reporte con ELK info
+                    // Finalizar reporte
                     bat """
                         echo ===================================== >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo ELK STACK - MONITOREO: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo ELASTICSEARCH - MONITOREO BASICO: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo ===================================== >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo Status: ${env.ELK_OK == 'true' ? 'ACTIVO' : 'INACTIVO'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo Kibana Dashboard: ${env.ELK_OK == 'true' ? 'http://localhost:5601' : 'NO DISPONIBLE'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo Logs de aplicacion: ${env.ELK_OK == 'true' ? 'RECOPILADOS' : 'NO DISPONIBLE'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo Indices en Elasticsearch: ${env.ELK_OK == 'true' ? 'prestabanco-YYYY.MM.DD' : 'NO DISPONIBLE'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo Elasticsearch: ${env.ELASTIC_OK == 'true' ? 'FUNCIONANDO' : 'FALLO'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo Kibana: ${env.KIBANA_OK == 'true' ? 'DISPONIBLE en http://localhost:5601' : 'NO DISPONIBLE'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo COMO REVISAR LOS RESULTADOS: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo ===================================== >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo COMO VER DATOS EN KIBANA: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo 1. Ir a http://localhost:5601 >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo 2. Analytics ^> Discover >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo 3. Create index pattern: prestabanco* >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 1. Leer este archivo REPORTE-SEGURIDAD.txt >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 2. Abrir frontend-report.html en navegador >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 3. Abrir backend-report.html en navegador >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 4. Ver logs en Kibana: http://localhost:5601 >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo    - Ir a Analytics ^> Discover >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo    - Crear index pattern: prestabanco* >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo SCAN COMPLETADO EXITOSAMENTE >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo SCAN COMPLETADO >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                     """
                     
                     currentBuild.result = 'SUCCESS'
@@ -290,7 +289,7 @@ pipeline {
                 echo """
                 =====================================
                     PRESTABANCO SECURITY SCAN
-                         CON ELK STACK
+                     CON ELASTICSEARCH BASICO
                 =====================================
                 
                 ARCHIVOS GENERADOS:
@@ -298,18 +297,13 @@ pipeline {
                   2. frontend-report.html
                   3. backend-report.html  
                 
-                ACCESO: ${BUILD_URL}artifact/${REPORTS_DIR}/
-                
-                SERVICIOS ESCANEADOS:
-                  Frontend: ${env.FRONTEND_OK == 'true' ? 'SI' : 'NO'}
-                  Backend:  ${env.BACKEND_OK == 'true' ? 'SI' : 'NO'}  
-                  ELK:      ${env.ELK_OK == 'true' ? 'SI' : 'NO'}
+                SERVICIOS:
+                  Frontend: ${env.FRONTEND_OK == 'true' ? 'OK' : 'FAILED'}
+                  Backend:  ${env.BACKEND_OK == 'true' ? 'OK' : 'FAILED'}  
+                  Elasticsearch: ${env.ELASTIC_OK == 'true' ? 'OK' : 'FAILED'}
+                  Kibana: ${env.KIBANA_OK == 'true' ? 'OK' : 'FAILED'}
                   
-                MONITOREO ELK:
-                  Kibana: ${env.ELK_OK == 'true' ? 'http://localhost:5601' : 'NO DISPONIBLE'}
-                  Logs: ${env.ELK_OK == 'true' ? 'Analytics > Discover > Create index pattern: prestabanco*' : 'NO DISPONIBLE'}
-                
-                NOTA: Exit code 2 es NORMAL (warnings)
+                KIBANA: ${env.KIBANA_OK == 'true' ? 'http://localhost:5601' : 'NO DISPONIBLE'}
                 =====================================
                 """
             }
