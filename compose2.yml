@@ -11,12 +11,6 @@ services:
       - backend
     networks:
       - app-network
-    # Logging directo a syslog para captura
-    logging:
-      driver: "syslog"
-      options:
-        syslog-address: "udp://localhost:5514"
-        tag: "frontend"
 
   # Backend service
   backend:
@@ -35,12 +29,6 @@ services:
       - postgres
     networks:
       - app-network
-    # Logging directo a syslog
-    logging:
-      driver: "syslog"
-      options:
-        syslog-address: "udp://localhost:5514"
-        tag: "backend"
 
   # PostgreSQL 
   postgres:
@@ -57,7 +45,7 @@ services:
     networks:
       - app-network
 
-  # Elasticsearch - Base de datos de logs
+  # Elasticsearch
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
     container_name: elasticsearch-1
@@ -66,6 +54,7 @@ services:
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
       - xpack.security.enabled=false
       - xpack.security.enrollment.enabled=false
+      - indices.query.bool.max_clause_count=10000
     ports:
       - "9200:9200"
     volumes:
@@ -73,7 +62,7 @@ services:
     networks:
       - app-network
 
-  # Kibana - Dashboard web
+  # Kibana
   kibana:
     image: docker.elastic.co/kibana/kibana:8.11.0
     container_name: kibana-1
@@ -86,14 +75,16 @@ services:
     networks:
       - app-network
 
-  # Logstash - Para capturar logs de aplicación
+  # Logstash ULTRA simplificado para tiempo real
   logstash:
     image: docker.elastic.co/logstash/logstash:8.11.0
     container_name: logstash-1
     ports:
       - "5514:5514/udp"
+      - "5515:5515/tcp"
     environment:
       LS_JAVA_OPTS: "-Xmx256m -Xms256m"
+      PIPELINE_WORKERS: 1
     depends_on:
       - elasticsearch
     networks:
@@ -101,26 +92,25 @@ services:
     command: >
       bash -c "
       echo 'input { 
-        syslog { port => 5514 }
+        tcp { port => 5515 codec => json }
+        udp { port => 5514 codec => json }
       }
       filter {
-        if [program] == \"frontend\" {
-          mutate { 
-            add_field => { \"service\" => \"frontend\" }
-            add_field => { \"application\" => \"prestabanco\" }
-          }
+        mutate { 
+          add_field => { \"[@metadata][index]\" => \"prestabanco-realtime-%{+YYYY.MM.dd}\" }
+          add_field => { \"application\" => \"prestabanco\" }
         }
-        if [program] == \"backend\" {
-          mutate { 
-            add_field => { \"service\" => \"backend\" }
-            add_field => { \"application\" => \"prestabanco\" }
-          }
+        if [container_name] =~ /frontend/ {
+          mutate { add_field => { \"service\" => \"frontend\" } }
+        }
+        if [container_name] =~ /backend/ {
+          mutate { add_field => { \"service\" => \"backend\" } }
         }
       }
       output {
         elasticsearch {
           hosts => [\"elasticsearch:9200\"]
-          index => \"prestabanco-app-logs-%{+YYYY.MM.dd}\"
+          index => \"%{[@metadata][index]}\"
         }
         stdout { codec => dots }
       }' > /usr/share/logstash/pipeline/logstash.conf &&
