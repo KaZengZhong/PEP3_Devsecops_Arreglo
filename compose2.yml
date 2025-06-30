@@ -16,7 +16,7 @@ services:
     logging:
       driver: gelf
       options:
-        gelf-address: "udp://localhost:12201"
+        gelf-address: "udp://logstash:12201"
         tag: "prestabanco.frontend"
 
   # Backend con logging directo a ELK
@@ -41,7 +41,7 @@ services:
     logging:
       driver: gelf
       options:
-        gelf-address: "udp://localhost:12201"
+        gelf-address: "udp://logstash:12201"
         tag: "prestabanco.backend"
 
   # PostgreSQL 

@@ -92,6 +92,10 @@ pipeline {
                         bat 'docker-compose -f compose2.yml rm -f elasticsearch kibana logstash'
                     }
                     
+                    echo "🚀 Iniciando aplicación PrestaBanco..."
+                    bat 'docker-compose -f compose2.yml up -d frontend backend postgres'
+                    sleep(time: 45, unit: 'SECONDS')
+                    
                     echo "🚀 Iniciando Elasticsearch..."
                     bat 'docker-compose -f compose2.yml up -d elasticsearch'
                     sleep(time: 90, unit: 'SECONDS')
