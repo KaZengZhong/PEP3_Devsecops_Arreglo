@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # Frontend service
+  # Frontend con logging directo a ELK
   frontend:
     image: kahaozeng/prestabanco-frontend:latest
     container_name: frontend-1
@@ -9,10 +9,17 @@ services:
       - "8070:80"
     depends_on:
       - backend
+      - logstash
     networks:
       - app-network
+    # INTEGRACIÓN DIRECTA CON ELK
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://localhost:12201"
+        tag: "prestabanco.frontend"
 
-  # Backend service
+  # Backend con logging directo a ELK
   backend:
     image: kahaozeng/prestabanco-backend:latest
     container_name: backend-1
@@ -27,8 +34,15 @@ services:
       - "8090:8090"
     depends_on:
       - postgres
+      - logstash
     networks:
       - app-network
+    # INTEGRACIÓN DIRECTA CON ELK
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://localhost:12201"
+        tag: "prestabanco.backend"
 
   # PostgreSQL 
   postgres:
@@ -54,7 +68,6 @@ services:
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
       - xpack.security.enabled=false
       - xpack.security.enrollment.enabled=false
-      - indices.query.bool.max_clause_count=10000
     ports:
       - "9200:9200"
     volumes:
@@ -75,44 +88,64 @@ services:
     networks:
       - app-network
 
-  # Logstash ULTRA simplificado para tiempo real
+  # Logstash configurado para recibir logs de Docker
   logstash:
     image: docker.elastic.co/logstash/logstash:8.11.0
     container_name: logstash-1
     ports:
-      - "5514:5514/udp"
-      - "5515:5515/tcp"
+      - "12201:12201/udp"  # Puerto GELF para Docker
+      - "5000:5000"
     environment:
       LS_JAVA_OPTS: "-Xmx256m -Xms256m"
-      PIPELINE_WORKERS: 1
     depends_on:
       - elasticsearch
     networks:
       - app-network
     command: >
       bash -c "
-      echo 'input { 
-        tcp { port => 5515 codec => json }
-        udp { port => 5514 codec => json }
+      echo 'input {
+        gelf {
+          port => 12201
+        }
       }
       filter {
-        mutate { 
-          add_field => { \"[@metadata][index]\" => \"prestabanco-realtime-%{+YYYY.MM.dd}\" }
+        # Procesar tags de Docker
+        if [tag] =~ /prestabanco\.frontend/ {
+          mutate {
+            add_field => { \"service\" => \"frontend\" }
+            add_field => { \"app_type\" => \"nginx\" }
+          }
+        }
+        if [tag] =~ /prestabanco\.backend/ {
+          mutate {
+            add_field => { \"service\" => \"backend\" }
+            add_field => { \"app_type\" => \"spring-boot\" }
+          }
+        }
+        
+        # Agregar metadata
+        mutate {
           add_field => { \"application\" => \"prestabanco\" }
+          add_field => { \"environment\" => \"development\" }
         }
-        if [container_name] =~ /frontend/ {
-          mutate { add_field => { \"service\" => \"frontend\" } }
-        }
-        if [container_name] =~ /backend/ {
-          mutate { add_field => { \"service\" => \"backend\" } }
+        
+        # Parser para logs de Nginx (frontend)
+        if [service] == \"frontend\" {
+          grok {
+            match => { 
+              \"message\" => \"%{COMBINEDAPACHELOG}\" 
+            }
+          }
         }
       }
       output {
         elasticsearch {
           hosts => [\"elasticsearch:9200\"]
-          index => \"%{[@metadata][index]}\"
+          index => \"prestabanco-docker-logs-%{+YYYY.MM.dd}\"
         }
-        stdout { codec => dots }
+        stdout { 
+          codec => rubydebug 
+        }
       }' > /usr/share/logstash/pipeline/logstash.conf &&
       /usr/local/bin/docker-entrypoint
       "
