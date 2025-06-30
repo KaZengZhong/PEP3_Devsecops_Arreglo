@@ -11,6 +11,12 @@ services:
       - backend
     networks:
       - app-network
+    # Logging directo a syslog para captura
+    logging:
+      driver: "syslog"
+      options:
+        syslog-address: "udp://localhost:5514"
+        tag: "frontend"
 
   # Backend service
   backend:
@@ -29,6 +35,12 @@ services:
       - postgres
     networks:
       - app-network
+    # Logging directo a syslog
+    logging:
+      driver: "syslog"
+      options:
+        syslog-address: "udp://localhost:5514"
+        tag: "backend"
 
   # PostgreSQL 
   postgres:
@@ -73,6 +85,47 @@ services:
       - elasticsearch
     networks:
       - app-network
+
+  # Logstash - Para capturar logs de aplicación
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    container_name: logstash-1
+    ports:
+      - "5514:5514/udp"
+    environment:
+      LS_JAVA_OPTS: "-Xmx256m -Xms256m"
+    depends_on:
+      - elasticsearch
+    networks:
+      - app-network
+    command: >
+      bash -c "
+      echo 'input { 
+        syslog { port => 5514 }
+      }
+      filter {
+        if [program] == \"frontend\" {
+          mutate { 
+            add_field => { \"service\" => \"frontend\" }
+            add_field => { \"application\" => \"prestabanco\" }
+          }
+        }
+        if [program] == \"backend\" {
+          mutate { 
+            add_field => { \"service\" => \"backend\" }
+            add_field => { \"application\" => \"prestabanco\" }
+          }
+        }
+      }
+      output {
+        elasticsearch {
+          hosts => [\"elasticsearch:9200\"]
+          index => \"prestabanco-app-logs-%{+YYYY.MM.dd}\"
+        }
+        stdout { codec => dots }
+      }' > /usr/share/logstash/pipeline/logstash.conf &&
+      /usr/local/bin/docker-entrypoint
+      "
 
 networks:
   app-network:

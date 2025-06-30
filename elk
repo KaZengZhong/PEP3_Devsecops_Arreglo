@@ -82,8 +82,8 @@ pipeline {
                     bat 'docker-compose -f compose2.yml up -d frontend backend postgres'
                     sleep(time: 45, unit: 'SECONDS')
                     
-                    echo "📊 Iniciando ELK Stack simplificado..."
-                    bat 'docker-compose -f compose2.yml up -d elasticsearch kibana'
+                    echo "📊 Iniciando ELK Stack con logging de aplicación..."
+                    bat 'docker-compose -f compose2.yml up -d elasticsearch kibana logstash'
                     sleep(time: 90, unit: 'SECONDS')
                 }
             }
@@ -98,7 +98,7 @@ pipeline {
                     echo "📈 Verificando ELK Stack..."
                     
                     try {
-                        bat 'docker-compose -f compose2.yml up -d elasticsearch kibana'
+                        bat 'docker-compose -f compose2.yml up -d elasticsearch kibana logstash'
                         sleep(time: 60, unit: 'SECONDS')
                         echo "✅ ELK Stack verificado"
                     } catch (Exception e) {
@@ -115,6 +115,8 @@ pipeline {
                     def backendOk = false
                     def elasticsearchOk = false
                     def kibanaOk = false
+                    
+                    def logstashOk = false
                     
                     echo "🔍 Verificando servicios..."
                     bat 'docker ps --format "table {{.Names}}\\t{{.Ports}}\\t{{.Status}}"'
@@ -155,16 +157,50 @@ pipeline {
                         echo "❌ Kibana: FAILED"
                     }
                     
+                    // Logstash
+                    try {
+                        bat 'netstat -an | findstr ":5514" | findstr UDP'
+                        logstashOk = true
+                        echo "✅ Logstash: OK (puerto 5514 UDP activo)"
+                    } catch (Exception e) {
+                        echo "❌ Logstash: FAILED"
+                    }
+                    
                     env.FRONTEND_OK = frontendOk.toString()
                     env.BACKEND_OK = backendOk.toString()
                     env.ELASTICSEARCH_OK = elasticsearchOk.toString()
                     env.KIBANA_OK = kibanaOk.toString()
+                    env.LOGSTASH_OK = logstashOk.toString()
                     env.ELK_OK = (elasticsearchOk && kibanaOk).toString()
                 }
             }
         }
         
-        stage('Log Security Events') {
+        stage('Generate App Logs') {
+            when {
+                expression { env.LOGSTASH_OK == 'true' }
+            }
+            steps {
+                script {
+                    echo "🌐 Generando logs de aplicación..."
+                    try {
+                        // Generar tráfico para logs
+                        echo "Visitando frontend..."
+                        bat 'powershell -Command "Invoke-WebRequest -Uri http://localhost:8070 -UseBasicParsing | Out-Null"'
+                        bat 'powershell -Command "Invoke-WebRequest -Uri http://localhost:8070/home -UseBasicParsing | Out-Null"'
+                        
+                        echo "Visitando backend..."
+                        bat 'powershell -Command "Invoke-WebRequest -Uri http://localhost:8090/actuator/health -UseBasicParsing | Out-Null"'
+                        
+                        sleep(time: 30, unit: 'SECONDS')
+                        echo "✅ Logs de aplicación generados"
+                        
+                    } catch (Exception e) {
+                        echo "⚠️ Warning: Error generando logs de aplicación - ${e.message}"
+                    }
+                }
+            }
+        }
             when {
                 expression { env.ELASTICSEARCH_OK == 'true' }
             }
