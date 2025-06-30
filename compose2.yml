@@ -1,54 +1,7 @@
-version: '3.8'
+# Removido version: '3.8' ya que es obsoleto en Docker Compose v2
 
 services:
-  # Frontend con logging directo a ELK
-  frontend:
-    image: kahaozeng/prestabanco-frontend:latest
-    container_name: frontend-1
-    ports:
-      - "8070:80"
-    depends_on:
-      - backend
-      - logstash
-    networks:
-      - app-network
-    # INTEGRACIÓN DIRECTA CON ELK - CORREGIDA
-    logging:
-      driver: gelf
-      options:
-        gelf-address: "udp://logstash:12201"  # Usar el nombre del servicio
-        tag: "prestabanco.frontend"
-        gelf-compression-type: "none"
-        gelf-compression-level: "1"
-
-  # Backend con logging directo a ELK
-  backend:
-    image: kahaozeng/prestabanco-backend:latest
-    container_name: backend-1
-    environment:
-      DB_HOST: postgres
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/prestabanco
-      SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: admin
-      SPRING_JPA_SHOW_SQL: "true"
-      SPRING_JPA_HIBERNATE_DDL_AUTO: "update"
-    ports:
-      - "8090:8090"
-    depends_on:
-      - postgres
-      - logstash
-    networks:
-      - app-network
-    # INTEGRACIÓN DIRECTA CON ELK - CORREGIDA
-    logging:
-      driver: gelf
-      options:
-        gelf-address: "udp://logstash:12201"  # Usar el nombre del servicio
-        tag: "prestabanco.backend"
-        gelf-compression-type: "none"
-        gelf-compression-level: "1"
-
-  # PostgreSQL 
+  # PostgreSQL - Sin logging especial
   postgres:
     image: postgres:latest
     container_name: postgres-1
@@ -82,33 +35,15 @@ services:
       test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
       interval: 30s
       timeout: 10s
-      retries: 5
+      retries: 10
+      start_period: 60s
 
-  # Kibana
-  kibana:
-    image: docker.elastic.co/kibana/kibana:8.11.0
-    container_name: kibana-1
-    ports:
-      - "5601:5601"
-    environment:
-      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
-    networks:
-      - app-network
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-
-  # Logstash configurado para recibir logs de Docker - CORREGIDO
+  # Logstash - DEBE estar completamente listo antes que frontend/backend
   logstash:
     image: docker.elastic.co/logstash/logstash:8.11.0
     container_name: logstash-1
     ports:
-      - "12201:12201/udp"  # Puerto GELF para Docker
+      - "12201:12201/udp"
       - "5000:5000"
     environment:
       LS_JAVA_OPTS: "-Xmx256m -Xms256m"
@@ -117,9 +52,12 @@ services:
         condition: service_healthy
     networks:
       - app-network
-    volumes:
-      - ./logstash-config:/usr/share/logstash/pipeline/
-    # Configuración inline mejorada
+    healthcheck:
+      test: ["CMD-SHELL", "netstat -ul | grep :12201 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
     command: >
       bash -c "
       cat > /usr/share/logstash/pipeline/logstash.conf << 'EOF'
@@ -128,7 +66,6 @@ services:
           port => 12201
           codec => json
         }
-        # Entrada adicional para testing
         tcp {
           port => 5000
           codec => json
@@ -138,7 +75,7 @@ services:
       filter {
         # Debug: mostrar todos los campos recibidos
         ruby {
-          code => 'logger.info(\"Received event\", :event => event.to_hash)'
+          code => 'logger.info(\"Received event from: #{event.get(\"[host]\")} - #{event.get(\"[tag]\")}\", :event => event.to_hash)'
         }
         
         # Procesar tags de Docker
@@ -159,6 +96,7 @@ services:
         mutate {
           add_field => { \"application\" => \"prestabanco\" }
           add_field => { \"environment\" => \"development\" }
+          add_field => { \"received_at\" => \"%{@timestamp}\" }
         }
         
         # Asegurar timestamp
@@ -167,61 +105,91 @@ services:
             code => 'event.set(\"@timestamp\", Time.now)'
           }
         }
-        
-        # Parser para logs de Nginx (frontend)
-        if [service] == \"frontend\" {
-          grok {
-            match => { 
-              \"message\" => \"%{COMBINEDAPACHELOG}\" 
-            }
-            tag_on_failure => [\"_grokparsefailure_nginx\"]
-          }
-        }
-        
-        # Parser para logs de Spring Boot (backend)
-        if [service] == \"backend\" {
-          grok {
-            match => { 
-              \"message\" => \"%{TIMESTAMP_ISO8601:log_timestamp}\\s+%{LOGLEVEL:log_level}\\s+%{NUMBER:pid}\\s+---\\s+\\[%{DATA:thread}\\]\\s+%{DATA:class}\\s+:\\s+%{GREEDYDATA:log_message}\" 
-            }
-            tag_on_failure => [\"_grokparsefailure_springboot\"]
-          }
-        }
       }
       
       output {
-        # Salida principal a Elasticsearch
         elasticsearch {
           hosts => [\"elasticsearch:9200\"]
           index => \"prestabanco-docker-logs-%{+YYYY.MM.dd}\"
           template_overwrite => true
         }
         
-        # Debug: mostrar en stdout
         stdout { 
-          codec => rubydebug 
-        }
-        
-        # Salida condicional para diferentes tipos de logs
-        if [service] == \"frontend\" {
-          elasticsearch {
-            hosts => [\"elasticsearch:9200\"]
-            index => \"prestabanco-frontend-logs-%{+YYYY.MM.dd}\"
-          }
-        }
-        
-        if [service] == \"backend\" {
-          elasticsearch {
-            hosts => [\"elasticsearch:9200\"]
-            index => \"prestabanco-backend-logs-%{+YYYY.MM.dd}\"
+          codec => rubydebug {
+            metadata => true
           }
         }
       }
       EOF
       
-      # Iniciar Logstash
+      echo 'Iniciando Logstash...'
       /usr/local/bin/docker-entrypoint
       "
+
+  # Kibana
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: kibana-1
+    ports:
+      - "5601:5601"
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  # Backend - CON dependencia estricta en Logstash
+  backend:
+    image: kahaozeng/prestabanco-backend:latest
+    container_name: backend-1
+    environment:
+      DB_HOST: postgres
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/prestabanco
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: admin
+      SPRING_JPA_SHOW_SQL: "true"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: "update"
+    ports:
+      - "8090:8090"
+    depends_on:
+      postgres:
+        condition: service_started
+      logstash:
+        condition: service_healthy
+    networks:
+      - app-network
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://logstash:12201"
+        tag: "prestabanco.backend"
+        gelf-compression-type: "none"
+        gelf-compression-level: "1"
+    restart: unless-stopped
+
+  # Frontend - CON dependencia estricta en Logstash Y Backend
+  frontend:
+    image: kahaozeng/prestabanco-frontend:latest
+    container_name: frontend-1
+    ports:
+      - "8070:80"
+    depends_on:
+      backend:
+        condition: service_started
+      logstash:
+        condition: service_healthy
+    networks:
+      - app-network
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://logstash:12201"
+        tag: "prestabanco.frontend"
+        gelf-compression-type: "none"
+        gelf-compression-level: "1"
+    restart: unless-stopped
 
 networks:
   app-network:
