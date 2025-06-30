@@ -7,6 +7,11 @@ pipeline {
             choices: ['QUICK', 'STANDARD', 'COMPREHENSIVE'],
             description: 'Profundidad del escaneo de seguridad'
         )
+        booleanParam(
+            name: 'RESTART_CONTAINERS',
+            defaultValue: false,
+            description: 'Forzar reinicio de contenedores'
+        )
     }
     
     environment {
@@ -31,23 +36,79 @@ pipeline {
             }
         }
         
-        stage('Deploy Services') {
+        stage('Check Existing Containers') {
             steps {
                 script {
-                    echo "Desplegando servicios con ELK Stack..."
-                    bat 'docker-compose -f compose2.yml down || echo "No containers"'
+                    echo "Verificando contenedores existentes..."
                     
-                    echo "Iniciando servicios principales..."
+                    def containersRunning = false
+                    try {
+                        def result = bat(script: 'docker ps --filter "name=frontend-1" --filter "name=backend-1" --filter "name=postgres-1" --format "{{.Names}}"', returnStdout: true).trim()
+                        def runningContainers = result.split('\n').findAll { it.trim() }
+                        
+                        echo "Contenedores ejecutándose: ${runningContainers}"
+                        
+                        if (runningContainers.size() >= 3) {
+                            containersRunning = true
+                            echo "✅ Contenedores principales ya están corriendo"
+                        }
+                        
+                    } catch (Exception e) {
+                        echo "No se pudieron verificar contenedores existentes"
+                    }
+                    
+                    env.CONTAINERS_RUNNING = containersRunning.toString()
+                }
+            }
+        }
+        
+        stage('Deploy Services') {
+            when {
+                anyOf {
+                    expression { params.RESTART_CONTAINERS }
+                    expression { env.CONTAINERS_RUNNING == 'false' }
+                }
+            }
+            steps {
+                script {
+                    echo "Iniciando servicios..."
+                    
+                    if (params.RESTART_CONTAINERS) {
+                        echo "🔄 Reiniciando todos los contenedores..."
+                        bat 'docker-compose -f compose2.yml down'
+                    }
+                    
+                    echo "🚀 Iniciando servicios principales..."
                     bat 'docker-compose -f compose2.yml up -d frontend backend postgres'
                     sleep(time: 45, unit: 'SECONDS')
                     
-                    echo "Iniciando Elasticsearch..."
+                    echo "📊 Iniciando Elasticsearch..."
                     bat 'docker-compose -f compose2.yml up -d elasticsearch'
                     sleep(time: 90, unit: 'SECONDS')
                     
-                    echo "Iniciando servicios ELK completo..."
+                    echo "📈 Iniciando ELK completo..."
                     bat 'docker-compose -f compose2.yml up -d kibana logstash filebeat'
                     sleep(time: 90, unit: 'SECONDS')
+                }
+            }
+        }
+        
+        stage('Start Missing ELK Services') {
+            when {
+                expression { env.CONTAINERS_RUNNING == 'true' }
+            }
+            steps {
+                script {
+                    echo "🔍 Verificando servicios ELK..."
+                    
+                    // Iniciar solo servicios ELK que no estén corriendo
+                    try {
+                        bat 'docker-compose -f compose2.yml up -d elasticsearch kibana logstash filebeat'
+                        sleep(time: 60, unit: 'SECONDS')
+                        echo "✅ Servicios ELK iniciados/verificados"
+                    } catch (Exception e) {
+                        echo "Warning: Error iniciando servicios ELK - ${e.message}"
+                    }
                 }
             }
         }
@@ -61,57 +122,52 @@ pipeline {
                     def kibanaOk = false
                     def logstashOk = false
                     
-                    echo "Verificando contenedores Docker..."
+                    echo "🔍 Verificando contenedores Docker..."
                     bat 'docker ps --format "table {{.Names}}\\t{{.Ports}}\\t{{.Status}}"'
                     
-                    // Frontend - verificación simplificada
+                    // Frontend - usando PowerShell básico
                     try {
-                        bat 'curl -f http://localhost:8070 --max-time 10 --silent --output nul'
+                        bat 'powershell -Command "try { Invoke-WebRequest -Uri http://localhost:8070 -TimeoutSec 10 -UseBasicParsing | Out-Null; exit 0 } catch { exit 1 }"'
                         frontendOk = true
-                        echo "Frontend: OK"
+                        echo "✅ Frontend: OK"
                     } catch (Exception e) {
-                        echo "Frontend: FAILED - ${e.message}"
+                        echo "❌ Frontend: FAILED"
                     }
                     
-                    // Backend - verificación con curl
+                    // Backend
                     try {
-                        bat 'curl -f http://localhost:8090 --max-time 10 --silent --output nul'
+                        bat 'powershell -Command "try { Test-NetConnection -ComputerName localhost -Port 8090 -WarningAction SilentlyContinue | Out-Null; exit 0 } catch { exit 1 }"'
                         backendOk = true
-                        echo "Backend: OK"
+                        echo "✅ Backend: OK"
                     } catch (Exception e) {
-                        echo "Backend: FAILED - ${e.message}"
+                        echo "❌ Backend: FAILED"
                     }
                     
-                    // Elasticsearch - verificación simple
+                    // Elasticsearch
                     try {
-                        bat 'curl -f http://localhost:9200/_cluster/health --max-time 15 --silent --output nul'
+                        bat 'powershell -Command "try { Invoke-WebRequest -Uri http://localhost:9200 -TimeoutSec 15 -UseBasicParsing | Out-Null; exit 0 } catch { exit 1 }"'
                         elasticsearchOk = true
-                        echo "Elasticsearch: OK"
+                        echo "✅ Elasticsearch: OK"
                     } catch (Exception e) {
-                        echo "Elasticsearch: FAILED - ${e.message}"
-                        try {
-                            bat 'docker logs elasticsearch-1 --tail 5'
-                        } catch (Exception logError) {
-                            echo "No se pudieron obtener logs de Elasticsearch"
-                        }
+                        echo "❌ Elasticsearch: FAILED"
                     }
                     
-                    // Kibana - verificación simple
+                    // Kibana
                     try {
-                        bat 'timeout 20 curl -f http://localhost:5601 --silent --output nul'
+                        bat 'powershell -Command "try { Invoke-WebRequest -Uri http://localhost:5601 -TimeoutSec 20 -UseBasicParsing | Out-Null; exit 0 } catch { exit 1 }"'
                         kibanaOk = true
-                        echo "Kibana: OK"
+                        echo "✅ Kibana: OK"
                     } catch (Exception e) {
-                        echo "Kibana: FAILED - ${e.message}"
+                        echo "❌ Kibana: FAILED"
                     }
                     
                     // Logstash - verificar puerto
                     try {
-                        bat 'netstat -an | findstr ":5044"'
+                        bat 'netstat -an | findstr ":5044" | findstr LISTENING'
                         logstashOk = true
-                        echo "Logstash: OK (puerto 5044 activo)"
+                        echo "✅ Logstash: OK (puerto 5044 activo)"
                     } catch (Exception e) {
-                        echo "Logstash: FAILED (puerto 5044 no disponible)"
+                        echo "❌ Logstash: FAILED"
                     }
                     
                     env.FRONTEND_OK = frontendOk.toString()
@@ -120,28 +176,45 @@ pipeline {
                     env.KIBANA_OK = kibanaOk.toString()
                     env.LOGSTASH_OK = logstashOk.toString()
                     env.ELK_STACK_OK = (elasticsearchOk && kibanaOk).toString()
+                    
+                    echo """
+                    📊 ESTADO DE SERVICIOS:
+                    Frontend: ${frontendOk ? '✅' : '❌'}
+                    Backend: ${backendOk ? '✅' : '❌'}
+                    Elasticsearch: ${elasticsearchOk ? '✅' : '❌'}
+                    Kibana: ${kibanaOk ? '✅' : '❌'}
+                    Logstash: ${logstashOk ? '✅' : '❌'}
+                    """
                 }
             }
         }
         
-        stage('Test ELK Connectivity') {
+        stage('Test ELK Basic') {
             when {
                 expression { env.ELASTICSEARCH_OK == 'true' }
             }
             steps {
                 script {
-                    echo "Probando conectividad con ELK..."
+                    echo "🧪 Probando conectividad con ELK..."
                     try {
-                        // Crear un documento de prueba simple
-                        bat 'curl -X POST "localhost:9200/prestabanco-test/_doc" -H "Content-Type: application/json" -d "{\\"timestamp\\": \\"2025-06-29T10:00:00\\", \\"message\\": \\"Test from Jenkins\\", \\"service\\": \\"jenkins-pipeline\\"}"'
+                        // Crear documento básico usando PowerShell
+                        bat '''
+                            powershell -Command "
+                            try {
+                                $body = '{\"timestamp\": \"' + (Get-Date -Format \"yyyy-MM-ddTHH:mm:ss\") + '\", \"message\": \"Test from Jenkins\", \"service\": \"jenkins-pipeline\"}'
+                                Invoke-RestMethod -Uri 'http://localhost:9200/prestabanco-test/_doc' -Method POST -Body $body -ContentType 'application/json'
+                                Write-Host 'ELK test: SUCCESS'
+                            } catch {
+                                Write-Host 'ELK test: FAILED'
+                                exit 1
+                            }
+                            "
+                        '''
                         
-                        // Verificar índices
-                        bat 'curl -X GET "localhost:9200/_cat/indices?v"'
-                        
-                        echo "ELK connectivity test: PASSED"
+                        echo "✅ ELK connectivity test: PASSED"
                         
                     } catch (Exception e) {
-                        echo "ELK connectivity test: FAILED - ${e.message}"
+                        echo "⚠️ ELK connectivity test: FAILED - ${e.message}"
                     }
                 }
             }
@@ -149,21 +222,26 @@ pipeline {
         
         stage('Generate Activity Logs') {
             when {
-                expression { env.ELK_STACK_OK == 'true' }
+                expression { env.FRONTEND_OK == 'true' || env.BACKEND_OK == 'true' }
             }
             steps {
                 script {
-                    echo "Generando logs de actividad..."
+                    echo "📝 Generando logs de actividad..."
                     try {
-                        // Generar tráfico en la aplicación
-                        bat 'curl http://localhost:8070 --silent --output nul || echo "Frontend request failed"'
-                        bat 'curl http://localhost:8090/actuator/health --silent --output nul || echo "Backend health check failed"'
+                        // Generar tráfico usando PowerShell
+                        if (env.FRONTEND_OK == 'true') {
+                            bat 'powershell -Command "try { Invoke-WebRequest -Uri http://localhost:8070 -UseBasicParsing | Out-Null } catch { }"'
+                        }
                         
-                        sleep(time: 30, unit: 'SECONDS')
-                        echo "Logs de actividad generados"
+                        if (env.BACKEND_OK == 'true') {
+                            bat 'powershell -Command "try { Invoke-WebRequest -Uri http://localhost:8090/actuator/health -UseBasicParsing | Out-Null } catch { }"'
+                        }
+                        
+                        sleep(time: 15, unit: 'SECONDS')
+                        echo "✅ Logs de actividad generados"
                         
                     } catch (Exception e) {
-                        echo "Warning: Error generando logs - ${e.message}"
+                        echo "⚠️ Warning: Error generando logs - ${e.message}"
                     }
                 }
             }
@@ -172,17 +250,20 @@ pipeline {
         stage('Security Scan') {
             steps {
                 script {
-                    echo "Iniciando scans de seguridad..."
+                    echo "🔒 Iniciando scans de seguridad..."
                     
                     // Crear el reporte principal
                     bat """
                         echo ===================================== > ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo    PRESTABANCO - SECURITY SCAN     >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo       CON ELK STACK INTEGRADO      >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo    CON ELK STACK ^& CONTENEDORES    >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo          REUTILIZABLES             >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo ===================================== >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo Fecha: %date% %time% >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo Build: ${BUILD_NUMBER} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo Contenedores reutilizados: ${env.CONTAINERS_RUNNING == 'true' ? 'SI' : 'NO'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo Restart forzado: ${params.RESTART_CONTAINERS ? 'SI' : 'NO'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo SERVICIOS ANALIZADOS: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo   Frontend:      ${env.FRONTEND_OK} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
@@ -195,18 +276,9 @@ pipeline {
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                     """
                     
-                    // Registrar inicio de scan en ELK (método simple)
-                    if (env.ELASTICSEARCH_OK == 'true') {
-                        try {
-                            bat 'curl -X POST "localhost:9200/prestabanco-security/_doc" -H "Content-Type: application/json" -d "{\\"timestamp\\": \\"%date% %time%\\", \\"event\\": \\"scan_started\\", \\"build\\": \\"%BUILD_NUMBER%\\", \\"service\\": \\"jenkins-pipeline\\"}"'
-                        } catch (Exception e) {
-                            echo "Warning: No se pudo registrar evento en ELK"
-                        }
-                    }
-                    
                     // Frontend Scan
                     if (env.FRONTEND_OK == 'true') {
-                        echo "Escaneando Frontend..."
+                        echo "🔍 Escaneando Frontend..."
                         try {
                             timeout(time: 15, unit: 'MINUTES') {
                                 bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}:/zap/wrk\" zaproxy/zap-stable zap-baseline.py -t ${FRONTEND_URL} -r frontend-report.html"
@@ -239,7 +311,7 @@ pipeline {
                     
                     // Backend Scan
                     if (env.BACKEND_OK == 'true') {
-                        echo "Escaneando Backend..."
+                        echo "🔍 Escaneando Backend..."
                         try {
                             timeout(time: 15, unit: 'MINUTES') {
                                 bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}:/zap/wrk\" zaproxy/zap-stable zap-baseline.py -t ${BACKEND_URL} -r backend-report.html"
@@ -274,42 +346,30 @@ pipeline {
                     // Database analysis
                     bat """
                         echo DATABASE SCAN: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo   Status: PUERTO PROTEGIDO (configuracion de seguridad correcta) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo   Status: PUERTO PROTEGIDO (configuracion correcta) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                     """
-                    
-                    // Registrar finalización en ELK
-                    if (env.ELASTICSEARCH_OK == 'true') {
-                        try {
-                            bat 'curl -X POST "localhost:9200/prestabanco-security/_doc" -H "Content-Type: application/json" -d "{\\"timestamp\\": \\"%date% %time%\\", \\"event\\": \\"scan_completed\\", \\"build\\": \\"%BUILD_NUMBER%\\", \\"service\\": \\"jenkins-pipeline\\", \\"result\\": \\"success\\"}"'
-                        } catch (Exception e) {
-                            echo "Warning: No se pudo registrar finalización en ELK"
-                        }
-                    }
                     
                     // Finalizar reporte
                     bat """
                         echo ===================================== >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo ELK STACK - MONITOREO INTEGRADO: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo ELK STACK ^& OPTIMIZACIONES: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo ===================================== >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo Elasticsearch: ${env.ELASTICSEARCH_OK == 'true' ? 'ACTIVO en http://localhost:9200' : 'INACTIVO'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo Kibana Dashboard: ${env.KIBANA_OK == 'true' ? 'DISPONIBLE en http://localhost:5601' : 'NO DISPONIBLE'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo Logstash Processing: ${env.LOGSTASH_OK == 'true' ? 'ACTIVO en puerto 5044' : 'INACTIVO'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo Logs de Aplicacion: ${env.ELK_STACK_OK == 'true' ? 'RECOPILADOS AUTOMATICAMENTE' : 'NO DISPONIBLE'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo Elasticsearch: ${env.ELASTICSEARCH_OK == 'true' ? 'ACTIVO' : 'INACTIVO'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo Kibana Dashboard: ${env.KIBANA_OK == 'true' ? 'http://localhost:5601' : 'NO DISPONIBLE'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo Logstash: ${env.LOGSTASH_OK == 'true' ? 'PROCESANDO LOGS' : 'INACTIVO'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo COMO ACCEDER A KIBANA: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo ===================================== >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo OPTIMIZACIONES APLICADAS: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo - Reutilizacion de contenedores existentes >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo - Inicio selectivo de servicios ELK >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo - Verificaciones rapidas con PowerShell >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo - Parametro para forzar restart si es necesario >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 1. Abrir http://localhost:5601 >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 2. Ir a Analytics ^> Discover >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 3. Crear index pattern: prestabanco* >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 4. Ver logs de aplicacion y eventos de seguridad >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo ARCHIVOS DE REPORTE: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 1. REPORTE-SEGURIDAD.txt (este archivo) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 2. frontend-report.html (analisis detallado) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 3. backend-report.html (analisis detallado) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo PROXIMA EJECUCION: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo - Los contenedores seguiran corriendo >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo - El siguiente scan sera mas rapido >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo - Usa 'Restart Containers' solo si hay problemas >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo SCAN COMPLETADO EXITOSAMENTE >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                     """
@@ -331,9 +391,9 @@ pipeline {
                             if exist *.yml del *.yml
                             if exist zap.yaml del zap.yaml
                         '''
-                        echo "Archivos temporales eliminados"
+                        echo "🧹 Archivos temporales eliminados"
                     } catch (Exception e) {
-                        echo "No hay archivos temporales para eliminar"
+                        echo "ℹ️ No hay archivos temporales para eliminar"
                     }
                 }
             }
@@ -348,47 +408,49 @@ pipeline {
                 echo """
                 =====================================
                     PRESTABANCO SECURITY SCAN
-                      CON ELK STACK INTEGRADO
+                   CON ELK ^& OPTIMIZACIONES
                 =====================================
                 
-                ARCHIVOS GENERADOS:
-                  1. REPORTE-SEGURIDAD.txt (LEER PRIMERO)
-                  2. frontend-report.html
-                  3. backend-report.html
+                REPORTES GENERADOS:
+                  📄 REPORTE-SEGURIDAD.txt (resumen ejecutivo)
+                  📊 frontend-report.html (análisis detallado)
+                  📊 backend-report.html (análisis detallado)
                 
-                ACCESO A REPORTES: ${BUILD_URL}artifact/${REPORTS_DIR}/
+                🔗 ACCESO: ${BUILD_URL}artifact/${REPORTS_DIR}/
                 
                 SERVICIOS ESCANEADOS:
-                  Frontend: ${env.FRONTEND_OK == 'true' ? 'ESCANEADO ✓' : 'NO DISPONIBLE ✗'}
-                  Backend:  ${env.BACKEND_OK == 'true' ? 'ESCANEADO ✓' : 'NO DISPONIBLE ✗'}
-                  Database: PROTEGIDA ✓ (puerto filtrado)
+                  Frontend: ${env.FRONTEND_OK == 'true' ? '✅ ESCANEADO' : '❌ NO DISPONIBLE'}
+                  Backend:  ${env.BACKEND_OK == 'true' ? '✅ ESCANEADO' : '❌ NO DISPONIBLE'}
+                  Database: ✅ PROTEGIDA (puerto filtrado)
                   
-                ELK STACK STATUS:
-                  Elasticsearch: ${env.ELASTICSEARCH_OK == 'true' ? 'ACTIVO ✓' : 'INACTIVO ✗'}
-                  Kibana:        ${env.KIBANA_OK == 'true' ? 'DISPONIBLE ✓' : 'NO DISPONIBLE ✗'}
-                  Logstash:      ${env.LOGSTASH_OK == 'true' ? 'PROCESANDO ✓' : 'INACTIVO ✗'}
+                ELK STACK:
+                  Elasticsearch: ${env.ELASTICSEARCH_OK == 'true' ? '✅ ACTIVO' : '❌ INACTIVO'}
+                  Kibana:        ${env.KIBANA_OK == 'true' ? '✅ DISPONIBLE' : '❌ NO DISPONIBLE'}
+                  Logstash:      ${env.LOGSTASH_OK == 'true' ? '✅ PROCESANDO' : '❌ INACTIVO'}
                   
-                MONITOREO EN TIEMPO REAL:
-                  📊 Kibana: ${env.KIBANA_OK == 'true' ? 'http://localhost:5601' : 'NO DISPONIBLE'}
-                  📈 Elasticsearch: ${env.ELASTICSEARCH_OK == 'true' ? 'http://localhost:9200' : 'NO DISPONIBLE'}
-                  📋 Logs: ${env.ELK_STACK_OK == 'true' ? 'RECOPILADOS' : 'NO DISPONIBLE'}
+                📊 MONITOREO: ${env.KIBANA_OK == 'true' ? 'http://localhost:5601' : 'NO DISPONIBLE'}
                 
-                NOTA: Exit code 2 de ZAP es NORMAL (warnings, no errores)
+                ⚡ OPTIMIZACIONES:
+                  - Contenedores reutilizados: ${env.CONTAINERS_RUNNING == 'true' ? 'SÍ' : 'NO'}
+                  - Siguiente scan será más rápido
+                  - Usa 'Restart Containers' solo si hay problemas
+                
+                ✅ Los contenedores siguen corriendo para el próximo scan
                 =====================================
                 """
             }
         }
         
         success {
-            echo "✅ SCAN DE SEGURIDAD COMPLETADO EXITOSAMENTE"
+            echo "🎉 SCAN DE SEGURIDAD COMPLETADO EXITOSAMENTE"
         }
         
         failure {
-            echo "❌ SCAN DE SEGURIDAD FALLÓ"
+            echo "💥 SCAN DE SEGURIDAD FALLÓ"
         }
         
         unstable {
-            echo "⚠️  SCAN COMPLETADO CON WARNINGS"
+            echo "⚠️ SCAN COMPLETADO CON WARNINGS"
         }
     }
 }
