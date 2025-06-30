@@ -257,6 +257,7 @@ pipeline {
                         echo   Backend:       ${env.BACKEND_OK} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo   Elasticsearch: ${env.ELASTICSEARCH_OK} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo   Kibana:        ${env.KIBANA_OK} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo   Logstash:      ${env.LOGSTASH_OK} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo RESULTADOS DE SEGURIDAD: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
@@ -394,24 +395,25 @@ pipeline {
                     // Finalizar reporte
                     bat """
                         echo ===================================== >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo ELK STACK SIMPLIFICADO: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo ELK STACK CON LOGS DE APLICACION: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo ===================================== >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo Elasticsearch: ${env.ELASTICSEARCH_OK == 'true' ? 'ACTIVO' : 'INACTIVO'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo Kibana Dashboard: ${env.KIBANA_OK == 'true' ? 'http://localhost:5601' : 'NO DISPONIBLE'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo Logstash: ${env.LOGSTASH_OK == 'true' ? 'CAPTURANDO LOGS' : 'INACTIVO'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo Eventos de seguridad: ${env.ELASTICSEARCH_OK == 'true' ? 'REGISTRADOS DIRECTAMENTE' : 'NO DISPONIBLE'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo Logs de aplicacion: ${env.LOGSTASH_OK == 'true' ? 'RECOPILADOS VIA SYSLOG' : 'NO DISPONIBLE'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo SIMPLIFICACIONES APLICADAS: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo - Eliminado Filebeat (causaba errores) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo - Eliminado Logstash (innecesario) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo CONFIGURACION APLICADA: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo - Filebeat eliminado (solucionado errores) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo - Logstash agregado para logs de aplicacion >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo - Eventos directos a Elasticsearch >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo - Stack mas estable y rapido >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo - Logs via syslog (mas estable) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo - Stack optimizado y rapido >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo COMO VER EVENTOS EN KIBANA: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 1. Ir a http://localhost:5601 >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 2. Analytics ^> Discover >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 3. Index pattern: prestabanco-security* >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 4. Ver eventos: scan_started, scan_completed, etc >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo COMO VER LOGS EN KIBANA: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo 1. Eventos de seguridad: prestabanco-security* >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
+                        echo 2. Logs de aplicacion: prestabanco-app-logs* >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                         echo SCAN COMPLETADO EXITOSAMENTE >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
                     """
@@ -450,7 +452,7 @@ pipeline {
                 echo """
                 =====================================
                   PRESTABANCO SECURITY SCAN
-                    ELK SIMPLIFICADO
+                  ELK CON LOGS DE APLICACION
                 =====================================
                 
                 📄 REPORTES GENERADOS:
@@ -465,28 +467,32 @@ pipeline {
                   Backend:  ${env.BACKEND_OK == 'true' ? '✅ ESCANEADO' : '❌ NO DISPONIBLE'}
                   Database: ✅ PROTEGIDA
                   
-                📊 ELK STACK (SIMPLIFICADO):
+                📊 ELK STACK:
                   Elasticsearch: ${env.ELASTICSEARCH_OK == 'true' ? '✅ ACTIVO' : '❌ INACTIVO'}
                   Kibana:        ${env.KIBANA_OK == 'true' ? '✅ DISPONIBLE' : '❌ NO DISPONIBLE'}
+                  Logstash:      ${env.LOGSTASH_OK == 'true' ? '✅ CAPTURANDO LOGS' : '❌ INACTIVO'}
                   
-                📈 EVENTOS DE SEGURIDAD: ${env.ELASTICSEARCH_OK == 'true' ? 'REGISTRADOS EN ELASTICSEARCH' : 'NO DISPONIBLE'}
+                📈 LOGS DISPONIBLES:
+                  🔒 Eventos de seguridad: ${env.ELASTICSEARCH_OK == 'true' ? 'prestabanco-security*' : 'NO DISPONIBLE'}
+                  🌐 Logs de aplicación: ${env.LOGSTASH_OK == 'true' ? 'prestabanco-app-logs*' : 'NO DISPONIBLE'}
+                  
                 🎯 DASHBOARD: ${env.KIBANA_OK == 'true' ? 'http://localhost:5601' : 'NO DISPONIBLE'}
                 
-                ⚡ OPTIMIZACIONES:
-                  ❌ Filebeat eliminado (causaba errores)
-                  ❌ Logstash eliminado (innecesario)  
-                  ✅ Stack más estable y rápido
+                ⚡ CONFIGURACION:
+                  ❌ Filebeat eliminado (solucionó errores)
+                  ✅ Logstash agregado (logs de aplicación)  
                   ✅ Eventos directos a Elasticsearch
+                  ✅ Logs via syslog (más estable)
                   ✅ Contenedores reutilizables
                 
-                🚀 PRÓXIMO SCAN: Solo toma 1-2 minutos (reutiliza contenedores)
+                🚀 PRÓXIMO SCAN: Más rápido con contenedores reutilizados
                 =====================================
                 """
             }
         }
         
         success {
-            echo "🎉 SCAN DE SEGURIDAD COMPLETADO - ELK SIMPLIFICADO"
+            echo "🎉 SCAN DE SEGURIDAD COMPLETADO - ELK CON LOGS DE APLICACIÓN"
         }
         
         failure {
