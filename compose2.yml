@@ -11,12 +11,6 @@ services:
       - backend
     networks:
       - app-network
-    # Agregar logging driver para mejor captura
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
   # Backend service
   backend:
@@ -35,12 +29,6 @@ services:
       - postgres
     networks:
       - app-network
-    # Agregar logging driver
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
   # PostgreSQL 
   postgres:
@@ -57,7 +45,7 @@ services:
     networks:
       - app-network
 
-  # Elasticsearch - Configuración simple
+  # Elasticsearch - Base de datos de logs
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
     container_name: elasticsearch-1
@@ -86,78 +74,6 @@ services:
     networks:
       - app-network
 
-  # Logstash - Sin archivos de configuración externos
-  logstash:
-    image: docker.elastic.co/logstash/logstash:8.11.0
-    container_name: logstash-1
-    ports:
-      - "5044:5044"
-    environment:
-      LS_JAVA_OPTS: "-Xmx256m -Xms256m"
-    depends_on:
-      - elasticsearch
-    networks:
-      - app-network
-    command: >
-      bash -c "
-      echo 'input { 
-        beats { port => 5044 }
-      }
-      filter {
-        if [docker][container][name] {
-          mutate { add_field => { \"container_name\" => \"%{[docker][container][name]}\" } }
-        }
-        if [message] {
-          mutate { add_field => { \"log_message\" => \"%{[message]}\" } }
-        }
-        mutate { add_field => { \"application\" => \"prestabanco\" } }
-      }
-      output {
-        elasticsearch {
-          hosts => [\"elasticsearch:9200\"]
-          index => \"prestabanco-logs-%{+YYYY.MM.dd}\"
-        }
-        stdout { codec => dots }
-      }' > /usr/share/logstash/pipeline/logstash.conf &&
-      /usr/local/bin/docker-entrypoint
-      "
-
-  # Filebeat - Configuración simplificada SIN errores YAML
-  filebeat:
-    image: docker.elastic.co/beats/filebeat:8.11.0
-    container_name: filebeat-1
-    user: root
-    volumes:
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - filebeat_data:/usr/share/filebeat/data
-    environment:
-      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
-      - LOGSTASH_HOSTS=logstash:5044
-    depends_on:
-      - logstash
-    networks:
-      - app-network
-    # Configuración más simple sin YAML complejo
-    command: >
-      sh -c "
-      cat > /usr/share/filebeat/filebeat.yml <<EOF
-      filebeat.inputs:
-      - type: container
-        paths:
-          - '/var/lib/docker/containers/*/*.log'
-        processors:
-        - add_docker_metadata:
-            host: 'unix:///var/run/docker.sock'
-
-      output.logstash:
-        hosts: ['logstash:5044']
-
-      logging.level: info
-      EOF
-      && filebeat -e
-      "
-
 networks:
   app-network:
     driver: bridge
@@ -166,6 +82,4 @@ volumes:
   postgres:
     external: true
   elasticsearch_data:
-    driver: local
-  filebeat_data:
     driver: local
