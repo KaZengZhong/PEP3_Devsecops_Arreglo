@@ -1,5 +1,4 @@
 services:
-  # Tu aplicación - SIN configuración especial de logging
   postgres:
     image: postgres:latest
     container_name: postgres-1
@@ -41,7 +40,6 @@ services:
     networks:
       - app-network
 
-  # ELK STACK SIMPLIFICADO
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
     container_name: elasticsearch
@@ -68,19 +66,31 @@ services:
     networks:
       - app-network
 
-  # Filebeat - Configuración externa (más segura)
+  # Filebeat con configuración por variables de entorno
   filebeat:
     image: docker.elastic.co/beats/filebeat:8.11.0
     container_name: filebeat
     user: root
+    environment:
+      - ELASTICSEARCH_HOST=elasticsearch:9200
+      - KIBANA_HOST=kibana:5601
     volumes:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
     networks:
       - app-network
     depends_on:
       - elasticsearch
+    command: |
+      bash -c "
+      # Configuración mínima que funciona
+      filebeat -e \
+        -E filebeat.inputs='[{type: container, paths: [\"/var/lib/docker/containers/*/*.log\"]}]' \
+        -E output.elasticsearch.hosts='[\"elasticsearch:9200\"]' \
+        -E output.elasticsearch.index='prestabanco-logs-%{+yyyy.MM.dd}' \
+        -E setup.kibana.host='kibana:5601' \
+        -E logging.level=info
+      "
 
 networks:
   app-network:
