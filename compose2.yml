@@ -1,27 +1,22 @@
-version: '3.8'
-
 services:
-  # === APLICACIONES PRESTABANCO ===
-  
-  frontend:
-    image: kahaozeng/prestabanco-frontend:latest
-    container_name: prestabanco-frontend
+  # Tu aplicación - SIN configuración especial de logging
+  postgres:
+    image: postgres:latest
+    container_name: postgres-1
+    environment:
+      POSTGRES_DB: prestabanco
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
     ports:
-      - "8070:80"
-    depends_on:
-      - backend
-    logging:
-      driver: gelf
-      options:
-        gelf-address: "udp://localhost:12201"
-        tag: "prestabanco-frontend"
+      - "5433:5432"
+    volumes:
+      - postgres:/var/lib/postgresql/data
     networks:
       - app-network
-    restart: unless-stopped
 
   backend:
     image: kahaozeng/prestabanco-backend:latest
-    container_name: prestabanco-backend
+    container_name: backend-1
     environment:
       DB_HOST: postgres
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/prestabanco
@@ -29,97 +24,101 @@ services:
       SPRING_DATASOURCE_PASSWORD: admin
       SPRING_JPA_SHOW_SQL: "true"
       SPRING_JPA_HIBERNATE_DDL_AUTO: "update"
-      LOGGING_LEVEL_ROOT: INFO
     ports:
       - "8090:8090"
     depends_on:
       - postgres
-      - graylog
-    logging:
-      driver: gelf
-      options:
-        gelf-address: "udp://localhost:12201"
-        tag: "prestabanco-backend"
     networks:
       - app-network
-    restart: unless-stopped
 
-  postgres:
-    image: postgres:latest
-    container_name: prestabanco-postgres
-    environment:
-      POSTGRES_DB: prestabanco
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: admin
+  frontend:
+    image: kahaozeng/prestabanco-frontend:latest
+    container_name: frontend-1
     ports:
-      - "0.0.0.0:5433:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    logging:
-      driver: gelf
-      options:
-        gelf-address: "udp://localhost:12201"
-        tag: "prestabanco-postgres"
-    networks:
-      - app-network
-    restart: unless-stopped
-
-  # === STACK GRAYLOG (MÍNIMO) ===
-  
-  mongo:
-    image: mongo:4.2
-    container_name: graylog-mongo
-    volumes:
-      - mongo_data:/data/db
-    networks:
-      - app-network
-    restart: unless-stopped
-
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch-oss:7.10.2
-    container_name: graylog-elasticsearch
-    environment:
-      - http.host=0.0.0.0
-      - transport.host=localhost
-      - network.host=0.0.0.0
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-      - discovery.type=single-node
-    volumes:
-      - es_data:/usr/share/elasticsearch/data
-    networks:
-      - app-network
-    restart: unless-stopped
-
-  graylog:
-    image: graylog/graylog:4.3
-    container_name: graylog-server
-    environment:
-      - GRAYLOG_PASSWORD_SECRET=somepasswordpepper
-      - GRAYLOG_ROOT_PASSWORD_SHA2=8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918
-      - GRAYLOG_HTTP_EXTERNAL_URI=http://localhost:9000/
-      - GRAYLOG_ELASTICSEARCH_HOSTS=http://elasticsearch:9200
-      - GRAYLOG_MONGODB_URI=mongodb://mongo/graylog
-      - GRAYLOG_ROOT_TIMEZONE=America/Santiago
-    entrypoint: /usr/bin/tini -- wait-for-it elasticsearch:9200 -- /docker-entrypoint.sh
-    networks:
-      - app-network
-    restart: unless-stopped
+      - "8070:80"
     depends_on:
-      - mongo
-      - elasticsearch
+      - backend
+    networks:
+      - app-network
+
+  # ELK STACK SIMPLIFICADO
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
     ports:
-      - "9000:9000"   # Web interface
-      - "12201:12201" # GELF UDP
-      - "1514:1514"   # Syslog UDP
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - app-network
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: kibana
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    networks:
+      - app-network
+
+  # Filebeat - Recolecta logs automáticamente
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.11.0
+    container_name: filebeat
+    user: root
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - ELASTICSEARCH_HOST=elasticsearch:9200
+      - KIBANA_HOST=kibana:5601
+    networks:
+      - app-network
+    depends_on:
+      - elasticsearch
+    command: >
+      bash -c "
+      cat > /usr/share/filebeat/filebeat.yml << 'EOF'
+      filebeat.inputs:
+      - type: container
+        paths:
+          - '/var/lib/docker/containers/*/*.log'
+        processors:
+        - add_docker_metadata:
+            host: 'unix:///var/run/docker.sock'
+        - decode_json_fields:
+            fields: ['message']
+            target: ''
+            overwrite_keys: true
+
+      output.elasticsearch:
+        hosts: ['elasticsearch:9200']
+        index: 'prestabanco-logs-%{+yyyy.MM.dd}'
+
+      setup.kibana:
+        host: 'kibana:5601'
+
+      setup.template:
+        name: 'prestabanco'
+        pattern: 'prestabanco-logs-*'
+      EOF
+      
+      filebeat -e
+      "
 
 networks:
   app-network:
     driver: bridge
 
 volumes:
-  postgres_data:
-    driver: local
-  mongo_data:
-    driver: local
-  es_data:
+  postgres:
+    external: true
+  elasticsearch_data:
     driver: local

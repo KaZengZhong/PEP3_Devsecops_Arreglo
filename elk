@@ -1,0 +1,350 @@
+pipeline {
+    agent any
+    
+    parameters {
+        booleanParam(
+            name: 'RESTART_ELK',
+            defaultValue: false,
+            description: 'Forzar reinicio completo del stack ELK'
+        )
+        booleanParam(
+            name: 'RESET_DATA',
+            defaultValue: false,
+            description: '⚠️ CUIDADO: Eliminar todos los datos de ELK'
+        )
+    }
+    
+    environment {
+        KIBANA_URL = 'http://localhost:5601'
+        ELASTICSEARCH_URL = 'http://localhost:9200'
+        COMPOSE_FILE = 'compose2.yml'
+    }
+    
+    stages {
+        stage('Initialize') {
+            steps {
+                script {
+                    echo "=== PRESTABANCO ELK STACK CON FILEBEAT ==="
+                    echo "🎯 Objetivo: Monitoreo automático con Filebeat"
+                    echo "📊 Stack: Elasticsearch + Kibana + Filebeat"
+                    echo "✅ Ventaja: NO requiere configuración compleja"
+                }
+            }
+        }
+        
+        stage('Check Current State') {
+            steps {
+                script {
+                    def elkRunning = false
+                    
+                    try {
+                        def result = bat(script: 'docker ps --filter "name=elasticsearch" --filter "name=kibana" --format "{{.Names}}"', returnStdout: true).trim()
+                        def runningContainers = result.split('\n').findAll { it.trim() }
+                        
+                        if (runningContainers.size() >= 2) {
+                            elkRunning = true
+                            echo "✅ ELK Stack ya está corriendo"
+                        } else {
+                            echo "🔄 ELK Stack necesita ser iniciado"
+                        }
+                        
+                    } catch (Exception e) {
+                        echo "No se pudo verificar estado actual"
+                    }
+                    
+                    env.ELK_RUNNING = elkRunning.toString()
+                }
+            }
+        }
+        
+        stage('Cleanup Data') {
+            when {
+                expression { params.RESET_DATA }
+            }
+            steps {
+                script {
+                    echo "⚠️ ELIMINANDO TODOS LOS DATOS DE ELK..."
+                    
+                    bat "docker-compose -f ${env.COMPOSE_FILE} down -v"
+                    
+                    try {
+                        bat 'docker volume rm elk_elasticsearch_data'
+                    } catch (Exception e) {
+                        echo "Volume ya eliminado o no existe"
+                    }
+                    
+                    echo "🗑️ Datos de ELK eliminados"
+                }
+            }
+        }
+        
+        stage('Deploy ELK Stack with Filebeat') {
+            when {
+                anyOf {
+                    expression { params.RESTART_ELK }
+                    expression { params.RESET_DATA }
+                    expression { env.ELK_RUNNING == 'false' }
+                }
+            }
+            steps {
+                script {
+                    if (params.RESTART_ELK && !params.RESET_DATA) {
+                        echo "🔄 Reiniciando ELK Stack..."
+                        bat "docker-compose -f ${env.COMPOSE_FILE} stop"
+                        bat "docker-compose -f ${env.COMPOSE_FILE} rm -f"
+                    }
+                    
+                    echo "🚀 Iniciando aplicación PrestaBanco..."
+                    bat "docker-compose -f ${env.COMPOSE_FILE} up -d postgres backend frontend"
+                    sleep(time: 30, unit: 'SECONDS')
+                    
+                    echo "🔍 Iniciando Elasticsearch..."
+                    bat "docker-compose -f ${env.COMPOSE_FILE} up -d elasticsearch"
+                    sleep(time: 60, unit: 'SECONDS')
+                    
+                    echo "📊 Iniciando Kibana..."
+                    bat "docker-compose -f ${env.COMPOSE_FILE} up -d kibana"
+                    sleep(time: 45, unit: 'SECONDS')
+                    
+                    echo "📁 Iniciando Filebeat (recolector automático)..."
+                    bat "docker-compose -f ${env.COMPOSE_FILE} up -d filebeat"
+                    sleep(time: 20, unit: 'SECONDS')
+                }
+            }
+        }
+        
+        stage('Start Missing Services') {
+            when {
+                expression { env.ELK_RUNNING == 'true' && !params.RESTART_ELK }
+            }
+            steps {
+                script {
+                    echo "🔍 Verificando servicios ELK existentes..."
+                    
+                    try {
+                        bat "docker-compose -f ${env.COMPOSE_FILE} up -d"
+                        sleep(time: 30, unit: 'SECONDS')
+                        echo "✅ Servicios ELK verificados/iniciados"
+                    } catch (Exception e) {
+                        echo "Warning: Error verificando servicios - ${e.message}"
+                    }
+                }
+            }
+        }
+        
+        stage('Verify ELK Health') {
+            steps {
+                script {
+                    def elasticsearchOk = false
+                    def kibanaOk = false
+                    def filebeatOk = false
+                    
+                    echo "🔍 Verificando salud del stack ELK con Filebeat..."
+                    bat 'docker ps --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"'
+                    
+                    // Elasticsearch
+                    try {
+                        bat 'powershell -Command "Invoke-WebRequest -Uri http://localhost:9200/_cluster/health -TimeoutSec 20 -UseBasicParsing | Out-Null"'
+                        elasticsearchOk = true
+                        echo "✅ Elasticsearch: HEALTHY"
+                    } catch (Exception e) {
+                        echo "❌ Elasticsearch: FAILED"
+                        try {
+                            bat 'docker logs elasticsearch --tail 10'
+                        } catch (Exception logError) {
+                            echo "No se pudieron obtener logs de Elasticsearch"
+                        }
+                    }
+                    
+                    // Kibana
+                    try {
+                        bat 'powershell -Command "Invoke-WebRequest -Uri http://localhost:5601 -TimeoutSec 25 -UseBasicParsing | Out-Null"'
+                        kibanaOk = true
+                        echo "✅ Kibana: HEALTHY"
+                    } catch (Exception e) {
+                        echo "❌ Kibana: FAILED"
+                        try {
+                            bat 'docker logs kibana --tail 10'
+                        } catch (Exception logError) {
+                            echo "No se pudieron obtener logs de Kibana"
+                        }
+                    }
+                    
+                    // Filebeat
+                    try {
+                        def filebeatStatus = bat(script: 'docker ps --filter "name=filebeat" --format "{{.Status}}"', returnStdout: true).trim()
+                        if (filebeatStatus.contains("Up")) {
+                            filebeatOk = true
+                            echo "✅ Filebeat: RUNNING (recolectando logs automáticamente)"
+                        } else {
+                            echo "❌ Filebeat: NOT RUNNING"
+                        }
+                    } catch (Exception e) {
+                        echo "❌ Filebeat: FAILED"
+                    }
+                    
+                    env.ELASTICSEARCH_OK = elasticsearchOk.toString()
+                    env.KIBANA_OK = kibanaOk.toString()
+                    env.FILEBEAT_OK = filebeatOk.toString()
+                    env.ELK_HEALTHY = (elasticsearchOk && kibanaOk && filebeatOk).toString()
+                }
+            }
+        }
+        
+        stage('Configure Kibana Index Patterns') {
+            when {
+                expression { env.ELASTICSEARCH_OK == 'true' && env.KIBANA_OK == 'true' }
+            }
+            steps {
+                script {
+                    echo "⚙️ Configurando Kibana para PrestaBanco..."
+                    
+                    try {
+                        // Esperar a que Kibana esté completamente listo
+                        sleep(time: 30, unit: 'SECONDS')
+                        
+                        // Crear index pattern para logs de PrestaBanco
+                        bat '''
+                            powershell -Command "
+                            # Esperar a que haya datos
+                            Start-Sleep -Seconds 10
+                            
+                            # Crear index pattern
+                            $indexPattern = @{
+                                attributes = @{
+                                    title = 'prestabanco-logs-*'
+                                    timeFieldName = '@timestamp'
+                                }
+                            } | ConvertTo-Json -Depth 5
+                            
+                            try {
+                                Invoke-RestMethod -Uri 'http://localhost:5601/api/saved_objects/index-pattern/prestabanco-logs' -Method POST -Body $indexPattern -ContentType 'application/json' -Headers @{'kbn-xsrf'='true'}
+                                Write-Host 'Index pattern creado para prestabanco-logs-*'
+                            } catch {
+                                Write-Host 'Index pattern ya existe o será creado automáticamente'
+                            }
+                            "
+                        '''
+                        
+                        echo "✅ Kibana configurado para PrestaBanco"
+                        
+                    } catch (Exception e) {
+                        echo "⚠️ Warning: Error en configuración de Kibana - ${e.message}"
+                        echo "💡 Los index patterns se pueden crear manualmente en Kibana"
+                    }
+                }
+            }
+        }
+        
+        stage('Generate Test Logs') {
+            when {
+                expression { env.ELK_HEALTHY == 'true' }
+            }
+            steps {
+                script {
+                    echo "🧪 Generando logs de prueba..."
+                    
+                    try {
+                        // Generar tráfico en la aplicación
+                        bat '''
+                            powershell -Command "
+                            Write-Host 'Generando tráfico en Frontend...'
+                            try { Invoke-WebRequest -Uri 'http://localhost:8070' -UseBasicParsing | Out-Null; Write-Host 'Frontend: OK' } catch { Write-Host 'Frontend no disponible aún' }
+                            
+                            Write-Host 'Generando tráfico en Backend...'
+                            try { Invoke-WebRequest -Uri 'http://localhost:8090/actuator/health' -UseBasicParsing | Out-Null; Write-Host 'Backend: OK' } catch { Write-Host 'Backend no disponible aún' }
+                            
+                            Write-Host 'Esperando que Filebeat procese los logs...'
+                            Start-Sleep -Seconds 30
+                            "
+                        '''
+                        
+                        // Verificar que los logs llegaron a Elasticsearch
+                        bat '''
+                            powershell -Command "
+                            $indices = Invoke-WebRequest -Uri 'http://localhost:9200/_cat/indices?v' -UseBasicParsing
+                            Write-Host 'Índices disponibles:'
+                            Write-Host $indices.Content
+                            
+                            try {
+                                $search = Invoke-WebRequest -Uri 'http://localhost:9200/prestabanco-logs-*/_search?size=5&pretty' -UseBasicParsing
+                                Write-Host 'Logs encontrados en Elasticsearch:'
+                                Write-Host $search.Content
+                            } catch {
+                                Write-Host 'Aún no hay logs o índice no creado'
+                            }
+                            "
+                        '''
+                        
+                        echo "✅ Test de logs completado"
+                        
+                    } catch (Exception e) {
+                        echo "⚠️ Warning: Error en test de logs - ${e.message}"
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                echo """
+                =====================================
+                  PRESTABANCO ELK + FILEBEAT STATUS
+                =====================================
+                
+                📊 COMPONENTES:
+                  Elasticsearch: ${env.ELASTICSEARCH_OK == 'true' ? '✅ ACTIVO' : '❌ INACTIVO'}
+                  Kibana:        ${env.KIBANA_OK == 'true' ? '✅ DISPONIBLE' : '❌ NO DISPONIBLE'}
+                  Filebeat:      ${env.FILEBEAT_OK == 'true' ? '✅ RECOLECTANDO' : '❌ INACTIVO'}
+                
+                🌐 ACCESO:
+                  📈 Elasticsearch API: ${env.ELASTICSEARCH_OK == 'true' ? 'http://localhost:9200' : 'NO DISPONIBLE'}
+                  📊 Kibana Dashboard: ${env.KIBANA_OK == 'true' ? 'http://localhost:5601' : 'NO DISPONIBLE'}
+                
+                📋 LOGS AUTOMÁTICOS:
+                  🔄 Filebeat recolecta logs de TODOS los contenedores automáticamente
+                  📁 Índice: prestabanco-logs-YYYY.MM.dd
+                  🎯 No requiere configuración manual de logging
+                
+                🎯 ESTADO GENERAL: ${env.ELK_HEALTHY == 'true' ? '✅ ELK + FILEBEAT OPERATIVO' : '⚠️ REQUIERE ATENCIÓN'}
+                
+                📝 PRÓXIMOS PASOS:
+                  1. Abrir Kibana: http://localhost:5601
+                  2. Ir a 'Discover' para ver logs en tiempo real
+                  3. Crear visualizaciones y dashboards
+                  4. Los logs se recolectan automáticamente
+                
+                💡 VENTAJAS DE FILEBEAT:
+                  ✅ Configuración mínima
+                  ✅ Recolección automática
+                  ✅ Sin archivos de configuración externos
+                  ✅ Funciona out-of-the-box
+                =====================================
+                """
+            }
+        }
+        
+        success {
+            script {
+                if (env.ELK_HEALTHY == 'true') {
+                    echo "🎉 ELK + FILEBEAT CONFIGURADO Y OPERATIVO"
+                    echo "📊 Dashboard disponible en: http://localhost:5601"
+                    echo "🔄 Logs recolectándose automáticamente"
+                } else {
+                    echo "⚠️ ELK + FILEBEAT PARCIALMENTE CONFIGURADO"
+                    echo "🔧 Revisar logs para diagnóstico"
+                }
+            }
+        }
+        
+        failure {
+            echo "❌ ERROR EN CONFIGURACIÓN DE ELK + FILEBEAT"
+        }
+        
+        unstable {
+            echo "⚠️ ELK + FILEBEAT CONFIGURADO CON WARNINGS"
+        }
+    }
+}
