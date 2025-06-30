@@ -68,7 +68,7 @@ services:
     networks:
       - app-network
 
-  # Filebeat - Recolecta logs automáticamente
+  # Filebeat - Configuración externa (más segura)
   filebeat:
     image: docker.elastic.co/beats/filebeat:8.11.0
     container_name: filebeat
@@ -76,42 +76,11 @@ services:
     volumes:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    environment:
-      - ELASTICSEARCH_HOST=elasticsearch:9200
-      - KIBANA_HOST=kibana:5601
+      - ./filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
     networks:
       - app-network
     depends_on:
       - elasticsearch
-    command: >
-      bash -c "
-      cat > /usr/share/filebeat/filebeat.yml << 'EOF'
-      filebeat.inputs:
-      - type: container
-        paths:
-          - '/var/lib/docker/containers/*/*.log'
-        processors:
-        - add_docker_metadata:
-            host: 'unix:///var/run/docker.sock'
-        - decode_json_fields:
-            fields: ['message']
-            target: ''
-            overwrite_keys: true
-
-      output.elasticsearch:
-        hosts: ['elasticsearch:9200']
-        index: 'prestabanco-logs-%{+yyyy.MM.dd}'
-
-      setup.kibana:
-        host: 'kibana:5601'
-
-      setup.template:
-        name: 'prestabanco'
-        pattern: 'prestabanco-logs-*'
-      EOF
-      
-      filebeat -e
-      "
 
 networks:
   app-network:

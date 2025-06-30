@@ -1,0 +1,74 @@
+filebeat.inputs:
+- type: container
+  paths:
+    - '/var/lib/docker/containers/*/*.log'
+  processors:
+  - add_docker_metadata:
+      host: "unix:///var/run/docker.sock"
+  - decode_json_fields:
+      fields: ["message"]
+      target: ""
+      overwrite_keys: true
+  - add_fields:
+      target: ""
+      fields:
+        application: prestabanco
+        environment: development
+
+# Procesar solo contenedores de PrestaBanco
+filebeat.autodiscover:
+  providers:
+    - type: docker
+      hints.enabled: true
+      templates:
+        - condition:
+            contains:
+              docker.container.name: "backend-1"
+          config:
+            - type: container
+              paths:
+                - "/var/lib/docker/containers/${data.docker.container.id}/*.log"
+              processors:
+                - add_fields:
+                    fields:
+                      service: backend
+                      app_type: spring-boot
+        - condition:
+            contains:
+              docker.container.name: "frontend-1"
+          config:
+            - type: container
+              paths:
+                - "/var/lib/docker/containers/${data.docker.container.id}/*.log"
+              processors:
+                - add_fields:
+                    fields:
+                      service: frontend
+                      app_type: nginx
+
+# Output a Elasticsearch
+output.elasticsearch:
+  hosts: ['elasticsearch:9200']
+  index: "prestabanco-logs-%{+yyyy.MM.dd}"
+
+# Configuración de Kibana
+setup.kibana:
+  host: "kibana:5601"
+
+# Template para el índice
+setup.template:
+  name: "prestabanco"
+  pattern: "prestabanco-logs-*"
+  settings:
+    index:
+      number_of_shards: 1
+      number_of_replicas: 0
+
+# Logging de Filebeat
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: /var/log/filebeat
+  name: filebeat
+  keepfiles: 7
+  permissions: 0644
