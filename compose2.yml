@@ -45,39 +45,99 @@ services:
     networks:
       - app-network
 
-  # Elasticsearch - Versión mínima
+  # Elasticsearch - Configuración simple
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.0
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
     container_name: elasticsearch-1
     environment:
       - discovery.type=single-node
-      - ES_JAVA_OPTS=-Xms128m -Xmx128m
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
       - xpack.security.enabled=false
-      - bootstrap.memory_lock=false
-      - cluster.routing.allocation.disk.threshold_enabled=false
+      - xpack.security.enrollment.enabled=false
     ports:
       - "9200:9200"
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
     networks:
       - app-network
-    restart: unless-stopped
 
-  # Kibana - Solo si Elasticsearch funciona
+  # Kibana - Dashboard web
   kibana:
-    image: docker.elastic.co/kibana/kibana:7.17.0
+    image: docker.elastic.co/kibana/kibana:8.11.0
     container_name: kibana-1
     ports:
       - "5601:5601"
     environment:
       ELASTICSEARCH_HOSTS: http://elasticsearch:9200
-      SERVER_BASEPATH: ""
-      SERVER_REWRITEBASEPATH: "false"
     depends_on:
       - elasticsearch
     networks:
       - app-network
-    restart: unless-stopped
+
+  # Logstash - Sin archivos de configuración externos
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    container_name: logstash-1
+    ports:
+      - "5044:5044"
+    environment:
+      LS_JAVA_OPTS: "-Xmx256m -Xms256m"
+    depends_on:
+      - elasticsearch
+    networks:
+      - app-network
+    # Configuración inline usando command
+    command: >
+      bash -c "
+      cat > /usr/share/logstash/pipeline/logstash.conf <<EOF
+      input {
+        beats { port => 5044 }
+        tcp { port => 5000 codec => json }
+      }
+      filter {
+        if [docker][container][name] {
+          mutate { add_field => { \"service_name\" => \"%{[docker][container][name]}\" } }
+        }
+        mutate { add_field => { \"application\" => \"prestabanco\" } }
+      }
+      output {
+        elasticsearch {
+          hosts => [\"elasticsearch:9200\"]
+          index => \"prestabanco-logs-%{+YYYY.MM.dd}\"
+        }
+      }
+      EOF
+      /usr/local/bin/docker-entrypoint
+      "
+
+  # Filebeat - Recolector de logs simplificado
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.11.0
+    container_name: filebeat-1
+    user: root
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - logstash
+    networks:
+      - app-network
+    # Configuración inline
+    command: >
+      bash -c "
+      cat > /usr/share/filebeat/filebeat.yml <<EOF
+      filebeat.inputs:
+      - type: container
+        paths: ['/var/lib/docker/containers/*/*.log']
+        processors:
+        - add_docker_metadata:
+            host: 'unix:///var/run/docker.sock'
+      output.logstash:
+        hosts: ['logstash:5044']
+      logging.level: info
+      EOF
+      filebeat -e
+      "
 
 networks:
   app-network:
