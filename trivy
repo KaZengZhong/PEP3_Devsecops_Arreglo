@@ -3,314 +3,107 @@ pipeline {
     
     parameters {
         choice(
-            name: 'SCAN_DEPTH',
-            choices: ['QUICK', 'STANDARD', 'COMPREHENSIVE'],
-            description: 'Profundidad del escaneo de seguridad'
-        )
-        booleanParam(
-            name: 'SCAN_DATABASE',
-            defaultValue: true,
-            description: 'Incluir escaneo de PostgreSQL'
+            name: 'SCAN_TYPE',
+            choices: ['STANDARD', 'QUICK', 'COMPREHENSIVE'],
+            description: 'Tipo de escaneo de seguridad'
         )
     }
     
     environment {
         REPORTS_DIR = 'security-reports'
-        FRONTEND_URL = 'http://localhost:8070'
-        BACKEND_URL = 'http://localhost:8090'
-        POSTGRES_HOST = 'localhost'
-        POSTGRES_PORT = '5433'
+        FRONTEND_IMAGE = 'kahaozeng/prestabanco-frontend:latest'
+        BACKEND_IMAGE = 'kahaozeng/prestabanco-backend:latest'
     }
     
     stages {
         stage('Initialize') {
             steps {
                 script {
-                    echo "=== PRESTABANCO SECURITY SCAN ==="
+                    echo "Iniciando pipeline de seguridad con Trivy"
+                    echo "Tipo de escaneo: ${params.SCAN_TYPE}"
+                    
+                    bat "if not exist ${REPORTS_DIR} mkdir ${REPORTS_DIR}"
+                }
+            }
+        }
+        
+        stage('Trivy Security Scan') {
+            parallel {
+                stage('Frontend Scan') {
+                    steps {
+                        script {
+                            echo "Escaneando Frontend..."
+                            
+                            def severity = getSeverityLevel(params.SCAN_TYPE)
+                            
+                            bat """
+                                docker run --rm ^
+                                    -v /var/run/docker.sock:/var/run/docker.sock ^
+                                    -v %cd%\\${REPORTS_DIR}:/reports ^
+                                    aquasec/trivy:latest image ^
+                                    ${FRONTEND_IMAGE} ^
+                                    --format table ^
+                                    --severity ${severity} ^
+                                    --output /reports/frontend-scan.txt ^
+                                    --exit-code 0
+                            """
+                            
+                            echo "Frontend scan completado"
+                        }
+                    }
+                }
+                
+                stage('Backend Scan') {
+                    steps {
+                        script {
+                            echo "Escaneando Backend..."
+                            
+                            def severity = getSeverityLevel(params.SCAN_TYPE)
+                            
+                            bat """
+                                docker run --rm ^
+                                    -v /var/run/docker.sock:/var/run/docker.sock ^
+                                    -v %cd%\\${REPORTS_DIR}:/reports ^
+                                    aquasec/trivy:latest image ^
+                                    ${BACKEND_IMAGE} ^
+                                    --format table ^
+                                    --severity ${severity} ^
+                                    --output /reports/backend-scan.txt ^
+                                    --exit-code 0
+                            """
+                            
+                            echo "Backend scan completado"
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Generate Summary') {
+            steps {
+                script {
+                    echo "Generando resumen de seguridad..."
                     
                     bat """
-                        if exist ${REPORTS_DIR} rmdir /s /q ${REPORTS_DIR}
-                        mkdir ${REPORTS_DIR}
+                        echo TRIVY SECURITY SCAN RESULTS > ${REPORTS_DIR}\\summary.txt
+                        echo ================================ >> ${REPORTS_DIR}\\summary.txt
+                        echo. >> ${REPORTS_DIR}\\summary.txt
+                        echo Scan Date: %date% %time% >> ${REPORTS_DIR}\\summary.txt
+                        echo Severity Filter: ${params.SCAN_TYPE} >> ${REPORTS_DIR}\\summary.txt
+                        echo. >> ${REPORTS_DIR}\\summary.txt
+                        echo Frontend: ${FRONTEND_IMAGE} >> ${REPORTS_DIR}\\summary.txt
+                        echo Backend: ${BACKEND_IMAGE} >> ${REPORTS_DIR}\\summary.txt
+                        echo. >> ${REPORTS_DIR}\\summary.txt
+                        echo Check frontend-scan.txt and backend-scan.txt for details >> ${REPORTS_DIR}\\summary.txt
                     """
                 }
             }
         }
         
-        stage('Deploy Services') {
+        stage('Archive Results') {
             steps {
                 script {
-                    bat 'docker-compose -f compose2.yml down || echo "No containers"'
-                    bat 'docker-compose -f compose2.yml up -d'
-                    sleep(time: 90, unit: 'SECONDS')
-                }
-            }
-        }
-        
-        stage('Verify Services') {
-            steps {
-                script {
-                    def frontendOk = false
-                    def backendOk = false
-                    def dbOk = false
-                    
-                    echo "Verificando contenedores Docker..."
-                    bat 'docker ps --format "table {{.Names}}\\t{{.Ports}}\\t{{.Status}}"'
-                    
-                    // Frontend
-                    try {
-                        bat 'powershell -Command "Invoke-WebRequest -Uri http://localhost:8070 -TimeoutSec 10 -UseBasicParsing | Out-Null"'
-                        frontendOk = true
-                        echo "Frontend: OK"
-                    } catch (Exception e) {
-                        echo "Frontend: FAILED"
-                    }
-                    
-                    // Backend - solo verificar que el puerto responda
-                    try {
-                        bat 'powershell -Command "Test-NetConnection -ComputerName localhost -Port 8090 -WarningAction SilentlyContinue"'
-                        backendOk = true
-                        echo "Backend: OK (puerto responde)"
-                    } catch (Exception e) {
-                        echo "Backend: FAILED"
-                    }
-                    
-                    // Database - verificacion exhaustiva
-                    echo "Verificando PostgreSQL..."
-                    try {
-                        // Verificar que el contenedor esta corriendo
-                        bat 'docker exec postgres-1 pg_isready -U postgres'
-                        echo "PostgreSQL contenedor: INTERNO OK"
-                        
-                        // Verificar puerto desde host
-                        bat 'powershell -Command "$conn = Test-NetConnection -ComputerName localhost -Port 5433 -WarningAction SilentlyContinue; if ($conn.TcpTestSucceeded) { Write-Host \'Puerto 5433 accesible\'; exit 0 } else { Write-Host \'Puerto 5433 bloqueado\'; exit 1 }"'
-                        dbOk = true
-                        echo "Database: OK (puerto accesible)"
-                    } catch (Exception e) {
-                        echo "Database: Puerto 5433 BLOQUEADO por firewall"
-                        echo "Pero contenedor PostgreSQL esta corriendo internamente"
-                        
-                        // Marcar como OK para scan interno
-                        dbOk = true
-                    }
-                    
-                    env.FRONTEND_OK = frontendOk.toString()
-                    env.BACKEND_OK = backendOk.toString()
-                    env.DATABASE_OK = dbOk.toString()
-                }
-            }
-        }
-        
-        stage('Security Scan') {
-            steps {
-                script {
-                    echo "Iniciando scans de seguridad..."
-                    
-                    // Crear el reporte principal desde el inicio
-                    bat """
-                        echo ===================================== > ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo    PRESTABANCO - SECURITY SCAN     >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo ===================================== >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo Fecha: %date% %time% >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo Build: ${BUILD_NUMBER} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo SERVICIOS ANALIZADOS: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo   Frontend:  ${env.FRONTEND_OK} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo   Backend:   ${env.BACKEND_OK} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo   Database:  ${env.DATABASE_OK} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo RESULTADOS DE SEGURIDAD: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                    """
-                    
-                    // Frontend Scan
-                    if (env.FRONTEND_OK == 'true') {
-                        echo "Escaneando Frontend..."
-                        try {
-                            timeout(time: 15, unit: 'MINUTES') {
-                                // Solo generar reporte HTML
-                                bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}:/zap/wrk\" zaproxy/zap-stable zap-baseline.py -t ${FRONTEND_URL} -r frontend-report.html"
-                            }
-                            
-                            bat """
-                                echo FRONTEND SCAN: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Target: ${FRONTEND_URL} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Status: COMPLETADO >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Reporte: frontend-report.html >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                            """
-                            
-                        } catch (Exception e) {
-                            bat """
-                                echo FRONTEND SCAN: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Target: ${FRONTEND_URL} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Status: CON WARNINGS >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Nota: Scan ejecutado, exit code 2 es normal >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                            """
-                        }
-                    } else {
-                        bat """
-                            echo FRONTEND SCAN: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                            echo   Status: NO EJECUTADO - Servicio no accesible >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                            echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        """
-                    }
-                    
-                    // Backend Scan
-                    if (env.BACKEND_OK == 'true') {
-                        echo "Escaneando Backend..."
-                        try {
-                            timeout(time: 15, unit: 'MINUTES') {
-                                // Solo generar reporte HTML
-                                bat "docker run --rm --network host -v \"%cd%\\${REPORTS_DIR}:/zap/wrk\" zaproxy/zap-stable zap-baseline.py -t ${BACKEND_URL} -r backend-report.html"
-                            }
-                            
-                            bat """
-                                echo BACKEND SCAN: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Target: ${BACKEND_URL} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Status: COMPLETADO >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Reporte: backend-report.html >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Nota: Error 403 es normal (Spring Security) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                            """
-                            
-                        } catch (Exception e) {
-                            bat """
-                                echo BACKEND SCAN: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Target: ${BACKEND_URL} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Status: CON WARNINGS >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Nota: Scan ejecutado, exit code 2 es normal >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                            """
-                        }
-                    } else {
-                        bat """
-                            echo BACKEND SCAN: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                            echo   Status: NO EJECUTADO - Servicio no accesible >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                            echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        """
-                    }
-                    
-                    // Database Scan - evitar puerto bloqueado
-                    if (params.SCAN_DATABASE && env.DATABASE_OK == 'true') {
-                        echo "Escaneando Database (desde red interna)..."
-                        try {
-                            // Metodo 1: Escanear desde red interna (evita firewall)
-                            timeout(time: 5, unit: 'MINUTES') {
-                                bat "docker run --rm --network owaspzap-pipeline_app-network -v \"%cd%\\${REPORTS_DIR}:/reports\" instrumentisto/nmap -sS -sV -p 5432 postgres-1 -oN /reports/database-scan.txt"
-                            }
-                            
-                            bat """
-                                echo DATABASE SCAN: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Target: postgres-1:5432 (red interna Docker) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Status: COMPLETADO >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Metodo: Scan directo a contenedor >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Reporte: database-scan.txt >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                            """
-                            
-                        } catch (Exception e) {
-                            echo "Red interna fallo, generando analisis de seguridad basico..."
-                            
-                            bat """
-                                echo DATABASE SCAN: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Status: ANALISIS DE CONFIGURACION >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Problema: Firewall bloquea puerto 5433 desde host >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Seguridad: BUENA - Puerto no expuesto publicamente >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo   Reporte: database-scan.txt (analisis de configuracion) >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                                echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                            """
-                            
-                            // Crear analisis de seguridad en lugar de scan tecnico
-                            bat """
-                                echo POSTGRESQL SECURITY ANALYSIS > ${REPORTS_DIR}\\database-scan.txt
-                                echo ============================== >> ${REPORTS_DIR}\\database-scan.txt
-                                echo Date: %date% %time% >> ${REPORTS_DIR}\\database-scan.txt
-                                echo Target: PostgreSQL (postgres-1 container) >> ${REPORTS_DIR}\\database-scan.txt
-                                echo. >> ${REPORTS_DIR}\\database-scan.txt
-                                echo CONFIGURACION DE SEGURIDAD: >> ${REPORTS_DIR}\\database-scan.txt
-                                echo ========================== >> ${REPORTS_DIR}\\database-scan.txt
-                                echo [+] Contenedor PostgreSQL aislado en red privada >> ${REPORTS_DIR}\\database-scan.txt
-                                echo [+] Puerto 5433 no accesible desde internet >> ${REPORTS_DIR}\\database-scan.txt
-                                echo [+] Comunicacion solo via red Docker interna >> ${REPORTS_DIR}\\database-scan.txt
-                                echo [+] Firewall/Docker bloquea acceso externo >> ${REPORTS_DIR}\\database-scan.txt
-                                echo. >> ${REPORTS_DIR}\\database-scan.txt
-                                echo ESTADO DEL SERVICIO: >> ${REPORTS_DIR}\\database-scan.txt
-                                echo =================== >> ${REPORTS_DIR}\\database-scan.txt
-                                echo Container: RUNNING >> ${REPORTS_DIR}\\database-scan.txt
-                                echo Database: prestabanco >> ${REPORTS_DIR}\\database-scan.txt
-                                echo User: postgres >> ${REPORTS_DIR}\\database-scan.txt
-                                echo Internal Port: 5432 >> ${REPORTS_DIR}\\database-scan.txt
-                                echo Mapped Port: 5433 (filtered by firewall) >> ${REPORTS_DIR}\\database-scan.txt
-                                echo. >> ${REPORTS_DIR}\\database-scan.txt
-                                echo EVALUACION DE SEGURIDAD: >> ${REPORTS_DIR}\\database-scan.txt
-                                echo ======================= >> ${REPORTS_DIR}\\database-scan.txt
-                                echo [GOOD] Database no expuesta publicamente >> ${REPORTS_DIR}\\database-scan.txt
-                                echo [GOOD] Solo accesible desde aplicacion backend >> ${REPORTS_DIR}\\database-scan.txt
-                                echo [GOOD] Red Docker proporciona aislamiento >> ${REPORTS_DIR}\\database-scan.txt
-                                echo [INFO] Puerto 5433 filtered es comportamiento esperado >> ${REPORTS_DIR}\\database-scan.txt
-                                echo. >> ${REPORTS_DIR}\\database-scan.txt
-                                echo RECOMENDACIONES: >> ${REPORTS_DIR}\\database-scan.txt
-                                echo =============== >> ${REPORTS_DIR}\\database-scan.txt
-                                echo 1. Mantener configuracion actual (puerto filtered) >> ${REPORTS_DIR}\\database-scan.txt
-                                echo 2. Solo exponer puerto 5433 si necesitas acceso externo >> ${REPORTS_DIR}\\database-scan.txt
-                                echo 3. Usar credenciales fuertes en produccion >> ${REPORTS_DIR}\\database-scan.txt
-                                echo 4. Configurar SSL/TLS para conexiones >> ${REPORTS_DIR}\\database-scan.txt
-                                echo. >> ${REPORTS_DIR}\\database-scan.txt
-                                echo CONCLUSION: Configuracion de seguridad ADECUADA >> ${REPORTS_DIR}\\database-scan.txt
-                                echo            Puerto bloqueado es una caracteristica de seguridad >> ${REPORTS_DIR}\\database-scan.txt
-                            """
-                        }
-                    } else {
-                        bat """
-                            echo DATABASE SCAN: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                            echo   Status: ${params.SCAN_DATABASE ? 'NO EJECUTADO - Servicio no accesible' : 'DESHABILITADO'} >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                            echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        """
-                    }
-                    
-                    // Finalizar reporte
-                    bat """
-                        echo ===================================== >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo COMO REVISAR LOS RESULTADOS: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo ===================================== >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 1. Leer este archivo REPORTE-SEGURIDAD.txt >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 2. Abrir frontend-report.html en navegador >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 3. Abrir backend-report.html en navegador >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo 4. Revisar database-scan.txt si aplica >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo IMPORTANTE: >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo - Exit code 2 significa warnings, no errores >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo - Error 403 en backend es normal >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo - Los reportes HTML contienen analisis detallado >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo. >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                        echo SCAN COMPLETADO EXITOSAMENTE >> ${REPORTS_DIR}\\REPORTE-SEGURIDAD.txt
-                    """
-                    
-                    currentBuild.result = 'SUCCESS'
-                }
-            }
-        }
-        
-        stage('Cleanup Temp Files') {
-            steps {
-                script {
-                    // Eliminar archivos temporales que ZAP pueda crear
-                    try {
-                        bat '''
-                            cd %cd%\\''' + "${REPORTS_DIR}" + '''
-                            if exist *.json del *.json
-                            if exist *.xml del *.xml
-                            if exist *.yaml del *.yaml
-                            if exist *.yml del *.yml
-                            if exist zap.yaml del zap.yaml
-                        '''
-                        echo "Archivos temporales eliminados"
-                    } catch (Exception e) {
-                        echo "No hay archivos temporales para eliminar"
-                    }
+                    echo "Archivando resultados..."
                 }
             }
         }
@@ -318,31 +111,27 @@ pipeline {
     
     post {
         always {
-            script {
-                archiveArtifacts artifacts: "${REPORTS_DIR}/**", allowEmptyArchive: true
-                
-                echo """
-                =====================================
-                    PRESTABANCO SECURITY SCAN
-                =====================================
-                
-                ARCHIVOS GENERADOS (maximo 4):
-                  1. REPORTE-SEGURIDAD.txt (LEER PRIMERO)
-                  2. frontend-report.html
-                  3. backend-report.html  
-                  4. database-scan.txt (si aplica)
-                
-                ACCESO: ${BUILD_URL}artifact/${REPORTS_DIR}/
-                
-                SERVICIOS ESCANEADOS:
-                  Frontend: ${env.FRONTEND_OK == 'true' ? 'SI' : 'NO'}
-                  Backend:  ${env.BACKEND_OK == 'true' ? 'SI' : 'NO'}  
-                  Database: ${env.DATABASE_OK == 'true' ? 'SI' : 'NO'}
-                
-                NOTA: Exit code 2 es NORMAL (warnings)
-                =====================================
-                """
-            }
+            archiveArtifacts artifacts: "${REPORTS_DIR}/**/*", fingerprint: true
+            echo "Pipeline de seguridad completado"
         }
+        success {
+            echo "Trivy security scan completed successfully"
+        }
+        failure {
+            echo "Pipeline encountered issues but reports may still be available"
+        }
+    }
+}
+
+def getSeverityLevel(scanType) {
+    switch(scanType) {
+        case 'QUICK':
+            return 'CRITICAL'
+        case 'STANDARD':
+            return 'CRITICAL,HIGH'
+        case 'COMPREHENSIVE':
+            return 'CRITICAL,HIGH,MEDIUM,LOW'
+        default:
+            return 'CRITICAL,HIGH'
     }
 }
